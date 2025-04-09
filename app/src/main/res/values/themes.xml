@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <style name="Theme.ElderHelper" parent="Theme.AppCompat.DayNight.NoActionBar" />
+    <!-- 您也可以考虑使用 Theme.MaterialComponents.DayNight.NoActionBar 如果您的项目使用了 Material Components -->
+
+</resources>

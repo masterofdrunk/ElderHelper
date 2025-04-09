@@ -1,0 +1,6 @@
+<resources>
+    <string name="app_name">ElderHelper</string>
+    <string name="overlay_notification_text">助手正在运行</string>
+    <string name="overlay_ticker_text">ElderHelper 服务正在运行</string>
+    <string name="stop_action_text">停止</string>
+</resources>
