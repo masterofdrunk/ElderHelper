@@ -1,0 +1,35 @@
+apply plugin: 'com.android.library'
+
+android {
+    namespace = "com.baidu.speech.core"
+    compileSdk 35
+
+    defaultConfig {
+        minSdkVersion 16
+        targetSdkVersion 35
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+
+    packagingOptions{
+        doNotStrip "*/*/libvad.dnn.so"
+        doNotStrip "*/*/libbd_easr_s1_merge_normal_20151216.dat.so"
+    }
+}
+
+dependencies {
+    // api fileTree(include: ['*.jar'], dir: 'libs') // REMOVE: Redundant with the line below
+    // implementation 'androidx.appcompat:appcompat:1.0.2' // REMOVE: Likely unnecessary and potentially conflicting
+    implementation files('libs/bdasr_V3_20210628_cfe8c44.jar')
+    implementation 'androidx.core:core-ktx:1.10.1'
+}

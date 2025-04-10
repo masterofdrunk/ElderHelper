@@ -1,23 +1,14 @@
 import java.util.Properties
 import java.io.FileInputStream
 
-// Function to load properties from local.properties
-fun getApiKey(projectRootDir: File, propertyName: String): String {
+// Function to load local properties safely
+fun getLocalProperty(key: String, project: Project): String {
     val properties = Properties()
-    val localPropertiesFile = File(projectRootDir, "local.properties")
-    if (localPropertiesFile.isFile) {
-        try {
-            FileInputStream(localPropertiesFile).use { fis ->
-                properties.load(fis)
-            }
-            return properties.getProperty(propertyName, "") // Return empty string if not found
-        } catch (e: Exception) {
-            println("Warning: Could not read local.properties file: ${e.message}")
-        }
-    } else {
-        println("Warning: local.properties file not found in project root.")
+    val localPropertiesFile = project.rootProject.file("local.properties")
+    if (localPropertiesFile.exists()) {
+        properties.load(localPropertiesFile.inputStream())
     }
-    return "" // Return empty string if file not found or error
+    return properties.getProperty(key, "")
 }
 
 plugins {
@@ -32,19 +23,26 @@ android {
 
     defaultConfig {
         applicationId = "com.example.elderhelper"
-        minSdk = 24
+        minSdk = 21
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        vectorDrawables {
+            useSupportLibrary = true
+        }
 
-        // Retrieve GEMINI API key from local.properties and add to BuildConfig
-        val geminiApiKey = getApiKey(rootProject.rootDir, "GEMINI_API_KEY")
+        // Use getLocalProperty for all keys
+        val geminiApiKey = getLocalProperty("GEMINI_API_KEY", project)
         if (geminiApiKey.isEmpty()) {
              println("Warning: GEMINI_API_KEY not found in local.properties. AI features might not work.")
         }
-        buildConfigField("String", "GEMINI_API_KEY", "\"${geminiApiKey}\"") // Changed field name
+        buildConfigField("String", "GEMINI_API_KEY", "\"${geminiApiKey}\"")
+
+        buildConfigField("String", "BAIDU_APP_ID", "\"${getLocalProperty("baidu.appid", project)}\"")
+        buildConfigField("String", "BAIDU_API_KEY", "\"${getLocalProperty("baidu.apikey", project)}\"")
+        buildConfigField("String", "BAIDU_SECRET_KEY", "\"${getLocalProperty("baidu.secretkey", project)}\"")
     }
 
     buildTypes {
@@ -54,8 +52,8 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-             // Ensure release builds also get the GEMINI API key
-             val geminiApiKey = getApiKey(rootProject.rootDir, "GEMINI_API_KEY")
+             // Ensure release builds also get the GEMINI API key using getLocalProperty
+             val geminiApiKey = getLocalProperty("GEMINI_API_KEY", project)
              buildConfigField("String", "GEMINI_API_KEY", "\"${geminiApiKey}\"")
         }
         debug {
@@ -72,6 +70,14 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+    composeOptions {
+        kotlinCompilerExtensionVersion = "1.5.1"
+    }
+    packaging {
+        resources {
+            excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
     }
 }
 
@@ -101,5 +107,8 @@ dependencies {
     // --- Ensure Google Generative AI Dependency is Correct --- //
     // Remove any other potential references to older versions if they exist.
     implementation("com.google.ai.client.generativeai:generativeai:0.9.0") // Explicitly using 0.4.0
+    // implementation(files("libs/bdasr_V3_20210628_cfe8c44.jar")) // REMOVE direct JAR dependency
+    implementation(files("libs/bdasr_V3_20210628_cfe8c44.jar")) // ADD direct file dependency
+    implementation("androidx.core:core-ktx:1.10.1") // Keep this dependency for app module
 
 }

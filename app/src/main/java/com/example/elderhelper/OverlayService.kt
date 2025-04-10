@@ -16,9 +16,6 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
-import android.speech.RecognitionListener
-import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
 import android.util.Log
 import android.view.Gravity
 import android.view.LayoutInflater
@@ -54,8 +51,14 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
 import java.net.UnknownHostException
 import com.example.elderhelper.BuildConfig
-//import com.google.ai.client.generativeai.type.InvalidApiKeyException
-//import com.google.ai.client.generativeai.type.GenerativeAiException
+import android.Manifest
+import com.baidu.speech.EventListener
+import com.baidu.speech.EventManager
+import com.baidu.speech.EventManagerFactory
+import com.baidu.speech.asr.SpeechConstant
+
+import org.json.JSONObject
+import org.json.JSONException
 
 
 // --- Mock AI Analyzer (Inside or outside OverlayService class) ---
@@ -69,13 +72,11 @@ class AIAnalyzer {
     private val coroutineScope = CoroutineScope(Dispatchers.IO + job)
 
     // Initialize the GenerativeModel
-    private val generativeModel: GenerativeModel? = if (apiKey.isNotEmpty()) {
+    private val generativeModel: GenerativeModel? = if (apiKey.isNotEmpty() && apiKey != "YOUR_API_KEY") { // Added check for placeholder
         try {
-            // For text-and-image input (multimodal), use gemini-1.5-flash-latest as gemini-pro-vision is deprecated
             GenerativeModel(
-                modelName = "gemini-1.5-flash-latest", // Use the latest flash model supporting vision
+                modelName = "gemini-1.5-flash", // Using 1.5 flash, ensure this is intended
                 apiKey = apiKey,
-                // Optional: Add safety settings and generation config
                  safetySettings = listOf(
                      SafetySetting(HarmCategory.HARASSMENT, BlockThreshold.ONLY_HIGH),
                      SafetySetting(HarmCategory.HATE_SPEECH, BlockThreshold.ONLY_HIGH),
@@ -83,10 +84,10 @@ class AIAnalyzer {
                      SafetySetting(HarmCategory.DANGEROUS_CONTENT, BlockThreshold.MEDIUM_AND_ABOVE)
                  ),
                  generationConfig = GenerationConfig.Builder().apply {
-                     temperature = 0.7f // Example temperature
+                     temperature = 0.7f
                      topK = 1
                      topP = 1f
-                     maxOutputTokens = 1024 // Increase limit
+                     maxOutputTokens = 1024
                  }.build()
             )
          } catch (e: Exception) {
@@ -94,23 +95,21 @@ class AIAnalyzer {
              null // Initialization failed
          }
     } else {
-        Log.e(TAG, "GEMINI_API_KEY is empty. AI Analyzer disabled.")
+        Log.e(TAG, "GEMINI_API_KEY is empty or placeholder. AI Analyzer disabled.")
         null
     }
 
     fun analyzeScreenAndQuery(screenBitmap: Bitmap?, query: String, callback: AICallback) {
         if (generativeModel == null) {
-             Log.e(TAG, "GenerativeModel not initialized (API key missing or init failed?). Cannot analyze.")
+             Log.e(TAG, "GenerativeModel not initialized (API key missing, placeholder, or init failed?). Cannot analyze.")
              CoroutineScope(Dispatchers.Main).launch {
                  callback.onResponse("抱歉，AI服务未正确配置。")
              }
              return
         }
-
         Log.d(TAG, "Sending query and image (present: ${screenBitmap != null}) to Gemini API: '$query'")
         coroutineScope.launch {
             try {
-                // --- Construct the multimodal input using content builder --- //
                 val inputContent = content {
                     if (screenBitmap != null) {
                         this.image(screenBitmap)
@@ -118,13 +117,8 @@ class AIAnalyzer {
                     } else {
                         this.text("用户的语音问题是：$query")
                     }
-                    // Role defaults to 'user'
                 }
-
-                // --- Call the API --- //
                  val response = generativeModel.generateContent(inputContent)
-
-                // Process the response
                 val responseText = response.text?.trim()
 
                 if (responseText != null) {
@@ -133,37 +127,36 @@ class AIAnalyzer {
                         callback.onResponse(responseText)
                     }
                 } else {
-                    // Log detailed reasons for null response
                     Log.w(TAG, "Gemini API returned null or empty text content.")
                     val blockReason = response.promptFeedback?.blockReason?.toString() ?: "未知原因"
                     val finishReason = response.candidates?.firstOrNull()?.finishReason?.toString() ?: "未知"
                     val safetyRatings = response.promptFeedback?.safetyRatings?.joinToString { "${it.category}: ${it.probability}" } ?: "N/A"
                     Log.w(TAG, "BlockReason: $blockReason, FinishReason: $finishReason, SafetyRatings: $safetyRatings")
-
                     withContext(Dispatchers.Main) {
                         callback.onResponse("抱歉，AI未能生成有效的回复。原因: $finishReason")
                     }
                 }
-
             } catch (e: Exception) {
                 Log.e(TAG, "Error calling Gemini API: ${e.message}", e)
-                // Provide specific error messages
                 val errorMessage = when(e) {
-                   // is InvalidApiKeyException -> "API密钥无效或过期。"
                     is ServerException -> "AI服务器错误，请稍后重试。(${e.message})"
                     is UnsupportedUserLocationException -> "当前地区不支持此服务。"
                     is UnknownHostException -> "网络连接错误，无法访问AI服务器。"
                     is CancellationException -> "请求被取消了。"
-                    // Catch other potential Gemini exceptions if needed
                     is ResponseStoppedException -> "AI回复因安全原因或其他限制被终止。(${e.response.promptFeedback?.blockReason})"
                     is SerializationException -> "解析AI回复时出错。"
                     is PromptBlockedException -> "请求因安全原因被阻止。(${e.response.promptFeedback?.blockReason})"
-                   // is GenerativeAiException -> "调用AI服务时出错: ${e.message}"
                     else -> "调用AI服务时发生未知错误。(${e::class.simpleName})"
                 }
                 withContext(Dispatchers.Main) {
                     callback.onResponse(errorMessage)
                 }
+            } finally {
+                 // Recycle bitmap here after Gemini call is complete
+                 // Ensure it's done even on errors or null responses
+                 // Move recycle from sendToAI to here? No, sendToAI calls this async.
+                 // Recycling should happen after callback.onResponse is called.
+                 // Let's keep recycling within sendToAI's callback for now.
             }
         }
     }
@@ -179,7 +172,7 @@ class AIAnalyzer {
 }
 // --- End AI Analyzer ---
 
-class OverlayService : Service(), RecognitionListener, TextToSpeech.OnInitListener {
+class OverlayService : Service(), TextToSpeech.OnInitListener, EventListener {
 
     private lateinit var windowManager: WindowManager
     private var overlayView: View? = null
@@ -195,14 +188,12 @@ class OverlayService : Service(), RecognitionListener, TextToSpeech.OnInitListen
     private var initialTouchX: Float = 0f
     private var initialTouchY: Float = 0f
     private val handler = Handler(Looper.getMainLooper())
-    private var isLongClick = false
-    private var isDragging = false // More specific flag for dragging state
-    private val longClickDuration = 500L // milliseconds for long press
+    private var wasDragged = false
 
-    // Speech Recognition Variables
-    private var speechRecognizer: SpeechRecognizer? = null
-    private var isRecording: Boolean = false
-    private lateinit var speechRecognizerIntent: Intent
+    // --- ADD Baidu ASR Variables ---
+    private var asrEventManager: EventManager? = null
+    private var isRecording: Boolean = false // Keep this flag for UI state
+    private var isEngineReadyForNext: Boolean = true // <<< ADD New flag
 
     // TextToSpeech Variables
     private var textToSpeech: TextToSpeech? = null
@@ -211,29 +202,28 @@ class OverlayService : Service(), RecognitionListener, TextToSpeech.OnInitListen
     // AI Analyzer Variable
     private lateinit var aiAnalyzer: AIAnalyzer
 
+    // --- ADD variable to store last partial result ---
+    private var lastPartialResult: String? = null
+    // --- End add variable ---
+
      // Screen Capture Variables
      private var screenWidth: Int = 0
      private var screenHeight: Int = 0
      private var screenDensity: Int = 0
-
-    // Screen Capture Components (now more persistent)
-    private var imageReader: ImageReader? = null
-    private var virtualDisplay: VirtualDisplay? = null
-    private var imageListener: OnImageAvailableListener? = null // Keep listener reference
-
-    // Callback for when capture is complete
-    @Volatile private var capturedBitmapForAnalysis: Bitmap? = null // Store captured bitmap
-    private var latestUserQuery: String? = null // Keep for passing text
-
-    // --- NEW: Pending Query Flag ---
-    private val isQueryPending = AtomicBoolean(false)
+     private var imageReader: ImageReader? = null
+     private var virtualDisplay: VirtualDisplay? = null
+     private var imageListener: OnImageAvailableListener? = null
+     @Volatile private var capturedBitmapForAnalysis: Bitmap? = null
+     private val isQueryPending = AtomicBoolean(false) // Keep for screen capture coordination
 
     companion object {
         private const val TAG = "OverlayService"
         private const val NOTIFICATION_CHANNEL_ID = "ElderHelperOverlayChannel"
         private const val NOTIFICATION_ID = 1
-        // Action for stopping the service via notification
         const val ACTION_STOP_SERVICE = "com.example.elderhelper.ACTION_STOP_SERVICE"
+        const val ACTION_MEDIA_PROJECTION_RESULT = "com.example.elderhelper.ACTION_MEDIA_PROJECTION_RESULT" // Keep for MainActivity
+        const val EXTRA_RESULT_CODE = "resultCode" // Keep for MainActivity
+        const val EXTRA_RESULT_DATA = "resultData" // Keep for MainActivity
     }
 
 
@@ -244,45 +234,31 @@ class OverlayService : Service(), RecognitionListener, TextToSpeech.OnInitListen
         mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
 
         // Initialize components
-        initializeSpeechRecognizer()
+        initializeBaiduASR() // Initialize Baidu ASR
         initializeTextToSpeech()
-        aiAnalyzer = AIAnalyzer() // Initialize our new AIAnalyzer
-        getScreenDimensions() // Get screen size info
+        aiAnalyzer = AIAnalyzer()
+        getScreenDimensions()
 
-        // Service needs to be foreground BEFORE adding the overlay window on newer Android versions
         startForegroundServiceNotification()
         createOverlayWindow()
-        setupImageListener() // Setup listener logic once
+        setupImageListener()
     }
 
-    // Initialize Speech Recognizer
-    private fun initializeSpeechRecognizer() {
-         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-            Log.e(TAG, "Speech recognition is not available on this device.")
-            Toast.makeText(this, "此设备不支持语音识别", Toast.LENGTH_LONG).show()
-            stopSelf()
-            return
-        }
-        try {
-            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
-            speechRecognizer?.setRecognitionListener(this) // Set listener to this service
-
-            speechRecognizerIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN") // Use standard IETF tag
-            }
-            Log.i(TAG, "SpeechRecognizer initialized successfully for Chinese (zh-CN).")
-        } catch (e: Exception) {
-            Log.e(TAG, "Error initializing SpeechRecognizer: ${e.message}", e)
-            Toast.makeText(this, "初始化语音识别失败", Toast.LENGTH_SHORT).show()
-            stopSelf()
-        }
+    // --- Initialize Baidu ASR ---
+    private fun initializeBaiduASR() {
+        // Use EventManagerFactory create an instance of EventManager
+        asrEventManager = EventManagerFactory.create(this, "asr")
+        // Register the EventListener
+        asrEventManager?.registerListener(this) // 'this' implements EventListener
+        Log.i(TAG, "Baidu ASR EventManager initialized and listener registered.")
+        // Load credentials here once? Or pass them in start parameters? Let's pass in start.
     }
+    // --- End Baidu ASR Init ---
 
     // Initialize TextToSpeech
     private fun initializeTextToSpeech() {
-        try {
-            textToSpeech = TextToSpeech(this, this) // Set listener to this service
+         try {
+            textToSpeech = TextToSpeech(this, this)
         } catch (e: Exception) {
             Log.e(TAG, "Error initializing TextToSpeech: ${e.message}", e)
              Toast.makeText(this, "初始化语音播报失败", Toast.LENGTH_SHORT).show()
@@ -327,7 +303,7 @@ class OverlayService : Service(), RecognitionListener, TextToSpeech.OnInitListen
 
         val inflater = LayoutInflater.from(this)
         try {
-             overlayView = inflater.inflate(R.layout.overlay_layout, null) // Ensure layout exists
+             overlayView = inflater.inflate(R.layout.overlay_layout, null)
         } catch (e: Exception) {
             Log.e(TAG, "Error inflating overlay layout R.layout.overlay_layout: ${e.message}", e)
             stopSelf() // Stop service if layout fails
@@ -372,148 +348,158 @@ class OverlayService : Service(), RecognitionListener, TextToSpeech.OnInitListen
         }
     }
 
-    // Setup touch listener for dragging the overlay
+    // Setup touch listener for dragging and press-and-hold speech
      private fun setupTouchListener(view: View) {
          val overlayButton = view.findViewById<ImageView>(R.id.overlay_button)
-         val longPressRunnable = Runnable {
-             if (!isDragging) { // Only trigger long press if not already dragging from movement
-                 isLongClick = true
-                 isDragging = true // Enter dragging mode on long press
-                 // Provide feedback if needed (vibration, visual change)
-                 Log.d(TAG, "Long press detected - entering drag mode")
+
+         // --- Click Listener for Start/Stop Recording --- //
+         overlayButton?.setOnClickListener {
+             if (wasDragged) {
+                 wasDragged = false // Reset flag and ignore click after drag
+                 Log.d(TAG,"Click ignored after drag.")
+                 return@setOnClickListener
              }
-         }
 
-         overlayButton?.setOnTouchListener { _, event ->
-             val x = event.rawX
-             val y = event.rawY
-             var handled = false // Flag if event was consumed
+             if (asrEventManager == null) {
+                  Log.e(TAG, "Baidu ASR EventManager is null. Cannot proceed.")
+                  Toast.makeText(this, "语音识别服务未初始化", Toast.LENGTH_SHORT).show()
+                  return@setOnClickListener
+             }
 
-             when (event.action) {
-                 MotionEvent.ACTION_DOWN -> {
-                     initialX = params.x
-                     initialY = params.y
-                     initialTouchX = x
-                     initialTouchY = y
-                     isLongClick = false
-                     isDragging = false // Reset dragging state on new touch down
-                     handler.postDelayed(longPressRunnable, longClickDuration)
-                     Log.v(TAG, "ACTION_DOWN: initialX=$initialX, initialY=$initialY, touchX=$initialTouchX, touchY=$initialTouchY")
-                     handled = true
-                 }
-                 MotionEvent.ACTION_MOVE -> {
-                     val dx = x - initialTouchX
-                     val dy = y - initialTouchY
-                      // Check significant movement
-                     val significantMove = Math.abs(dx) > 10 || Math.abs(dy) > 10
+             if (!isRecording && isEngineReadyForNext) { // <<< MODIFIED: Add check for isEngineReadyForNext
+                 // --- Start Recording ---
+                 if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                     if (!isQueryPending.get()) { // Check if another process is ongoing
+                         Log.i(TAG, "Click: Starting recording & capture request.")
+                         isRecording = true // Set recording state immediately
+                         isEngineReadyForNext = false // <<< ADD: Set engine busy flag
+                         overlayButton.alpha = 0.5f // Indicate recording visually
 
-                     if (significantMove && !isDragging) {
-                         // If significant movement happens before long press, cancel long press and start dragging
-                         handler.removeCallbacks(longPressRunnable)
-                         isDragging = true
-                         Log.d(TAG, "Movement detected - entering drag mode")
-                     }
-
-                     if (isDragging) {
-                         params.x = initialX + dx.toInt()
-                         params.y = initialY + dy.toInt()
-                         Log.v(TAG, "ACTION_MOVE: Dragging to x=${params.x}, y=${params.y}")
+                         // --- Prepare Baidu start parameters ---
+                         val params = JSONObject()
                          try {
-                             windowManager.updateViewLayout(overlayView, params)
-                         } catch (e: Exception) {
-                             Log.e(TAG, "Error updating overlay position: ${e.message}")
+                             // Use String Literals for Authentication Keys
+                             params.put(SpeechConstant.APP_ID, BuildConfig.BAIDU_APP_ID)
+                             params.put(SpeechConstant.APP_KEY, BuildConfig.BAIDU_API_KEY)
+                             params.put(SpeechConstant.SECRET, BuildConfig.BAIDU_SECRET_KEY)
+                             // Keep using constants for other params where they exist
+                             params.put(SpeechConstant.PID, 1537)
+                             params.put(SpeechConstant.ACCEPT_AUDIO_VOLUME, false)
+                             params.put(SpeechConstant.VAD_ENDPOINT_TIMEOUT, 0) // Set to 0 to disable VAD for testing
+                         } catch (e: JSONException) {
+                             Log.e(TAG, "Error creating Baidu ASR start JSON parameters", e)
+                             Toast.makeText(this, "配置语音识别参数失败", Toast.LENGTH_SHORT).show()
+                             isRecording = false
+                             overlayButton.alpha = 1.0f
+                             return@setOnClickListener
                          }
-                         handled = true // Consume move events while dragging
+
+                         // --- Start screen capture request ---
+                          capturedBitmapForAnalysis?.recycle()
+                          capturedBitmapForAnalysis = null
+                          requestScreenCapture() // Set screen capture pending flag
+
+                         // --- Send start command to Baidu SDK ---
+                         val jsonParamString = params.toString()
+                         Log.d(TAG, "Sending Baidu ASR start command: $jsonParamString")
+                         asrEventManager?.send(SpeechConstant.ASR_START, jsonParamString, null, 0, 0)
+
+                     } else {
+                         Log.w(TAG, "Click: Ignored start, query still pending (screen capture).")
+                         Toast.makeText(this, "正在处理上一条...", Toast.LENGTH_SHORT).show()
                      }
+                 } else {
+                     Log.e(TAG, "Click: Ignored start, RECORD_AUDIO permission missing.")
+                     Toast.makeText(this, "需要录音权限", Toast.LENGTH_SHORT).show()
                  }
-                 MotionEvent.ACTION_UP -> {
-                    Log.v(TAG, "ACTION_UP: isDragging=$isDragging, isLongClick=$isLongClick")
-                    handler.removeCallbacks(longPressRunnable) // Always remove callbacks on UP
+             } else if (isRecording) {
+                 // --- Stop Baidu Recording ---
+                 Log.i(TAG, "Click: Stopping Baidu recording.")
+                 isRecording = false // Set recording state immediately
+                 overlayButton.alpha = 0.8f // Indicate processing visually (optional)
 
-                    val wasDragging = isDragging // Capture state before reset
-
-                    // Reset flags for next interaction
-                    isDragging = false
-                    isLongClick = false
-
-                    if (!wasDragging) {
-                        // *** If it wasn't a drag, treat it as a click ***
-                        Log.d(TAG, "Tap detected in OnTouchListener ACTION_UP")
-                        handleOverlayClick() // Directly call click handler
-                        handled = true // Consume the event, as we handled the click
-                    } else {
-                        // If it was a drag, just consume the UP event
-                        handled = true
-                    }
-                 }
-                  MotionEvent.ACTION_CANCEL -> {
-                     Log.d(TAG, "ACTION_CANCEL")
-                     handler.removeCallbacks(longPressRunnable)
-                     isLongClick = false
-                     isDragging = false
-                     handled = true
-                 }
+                 // --- Send stop command to Baidu SDK ---
+                 asrEventManager?.send(SpeechConstant.ASR_STOP, null, null, 0, 0)
+                 Toast.makeText(this, "正在处理...", Toast.LENGTH_SHORT).show()
+             } else if (!isEngineReadyForNext) { // <<< ADD: Handle case where engine is not ready
+                 Log.w(TAG, "Click: Ignored start, ASR engine not ready yet.")
+                 Toast.makeText(this, "请稍候，引擎正在准备...", Toast.LENGTH_SHORT).show()
              }
-              handled // Return true if event was handled/consumed
          }
-     }
 
+         // --- Touch Listener primarily for Dragging --- //
+         overlayButton?.setOnTouchListener { _, event ->
+              val x = event.rawX
+              val y = event.rawY
+              val dragThreshold = 15f // Pixel threshold to consider it a drag
 
-    // Handle Overlay Button Click - Modified for Tap-to-Talk
-    private fun handleOverlayClick() {
-        val overlayButton = overlayView?.findViewById<ImageView>(R.id.overlay_button)
+              when (event.action) {
+                  MotionEvent.ACTION_DOWN -> {
+                      initialX = params.x
+                      initialY = params.y
+                      initialTouchX = x
+                      initialTouchY = y
+                      wasDragged = false // Reset drag flag on new touch sequence
+                      return@setOnTouchListener false // Don't consume DOWN, let MOVE/UP/Click handle it
+                  }
+                  MotionEvent.ACTION_MOVE -> {
+                      val dx = x - initialTouchX
+                      val dy = y - initialTouchY
 
-        if (speechRecognizer == null) {
-            Log.e(TAG, "SpeechRecognizer not initialized, cannot handle click.")
-            Toast.makeText(this, "语音识别未就绪", Toast.LENGTH_SHORT).show()
-            return
-        }
-        if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-             Log.e(TAG, "RECORD_AUDIO permission not granted!")
-             Toast.makeText(this, "需要录音权限", Toast.LENGTH_SHORT).show()
-             stopSelf()
-             return
-        }
+                      if (!wasDragged && (Math.abs(dx) > dragThreshold || Math.abs(dy) > dragThreshold)) {
+                          wasDragged = true // Set drag flag
+                          Log.d(TAG, "Drag detected during touch.")
+                          // If recording is active, update visual state to indicate drag is happening?
+                          // Maybe reset alpha to normal during drag?
+                          overlayButton.alpha = 1.0f
+                      }
 
-        // --- Only start if not already recording --- //
-        if (!isRecording) {
-            if (isQueryPending.get()) {
-                // This check might be less critical now, but keep it for safety
-                Log.w(TAG, "Query still pending from previous operation? Ignoring click.")
-                 Toast.makeText(this, "正在处理上一条...", Toast.LENGTH_SHORT).show()
-                return
-            }
+                      if (wasDragged) {
+                           params.x = initialX + dx.toInt()
+                           params.y = initialY + dy.toInt()
+                           try {
+                               windowManager.updateViewLayout(overlayView, params)
+                           } catch (e: Exception) {
+                               Log.e(TAG, "Error updating overlay position: ${e.message}")
+                           }
+                      }
 
-            Log.i(TAG, "Starting speech recognition AND screen capture request.")
-            try {
-                capturedBitmapForAnalysis?.recycle()
-                capturedBitmapForAnalysis = null
-                requestScreenCapture() // Set flag for listener to capture next image
-
-                speechRecognizer?.startListening(speechRecognizerIntent)
-                isRecording = true // Set recording state
-                overlayButton?.alpha = 0.5f // Update button appearance
-                // Toast.makeText(this, "正在聆听...", Toast.LENGTH_SHORT).show() // Replaced by onReadyForSpeech toast
-
-            } catch (e: Exception) {
-                Log.e(TAG, "Error starting recording/capture: ${e.message}", e)
-                Toast.makeText(this, "启动录音或截屏失败", Toast.LENGTH_SHORT).show()
-                // Reset states on failure
-                isRecording = false
-                isQueryPending.set(false)
-                capturedBitmapForAnalysis?.recycle()
-                capturedBitmapForAnalysis = null
-                overlayButton?.alpha = 1.0f
-            }
-        } else {
-            // --- If already recording, ignore the click --- //
-            Log.d(TAG, "handleOverlayClick: Ignored click because already recording.")
-             // Optionally provide feedback that recording is in progress
-             // Toast.makeText(this, "正在录音中...", Toast.LENGTH_SHORT).show()
-        }
-        // --- REMOVED the old else block that called stopListening() --- //
-    }
-
+                      // Consume MOVE event if dragging occurred to prevent other listeners.
+                     return@setOnTouchListener wasDragged
+                  }
+                  MotionEvent.ACTION_UP -> {
+                      // If ACTION_UP occurs, check if a drag happened.
+                      // If it was a drag (wasDragged is true), consume the event (return true)
+                      // to prevent the OnClickListener from firing.
+                      // Otherwise (wasDragged is false), don't consume (return false), allowing
+                      // the OnClickListener to register this as a click.
+                      val consumeEvent = wasDragged
+                       // Reset button appearance if dragging just ended (alpha might be 1.0 from MOVE)
+                       // If it was NOT a drag, the click listener will handle alpha changes.
+                      // if (consumeEvent) {
+                      //     overlayButton.alpha = 1.0f // Reset alpha if drag ended
+                      // }
+                      return@setOnTouchListener consumeEvent
+                  }
+                   MotionEvent.ACTION_CANCEL -> {
+                      Log.w(TAG, "ACTION_CANCEL received.")
+                      wasDragged = false // Reset drag flag
+                      overlayButton.alpha = 1.0f // Ensure button is visually reset
+                      // If recording was active, should CANCEL cancel it? Maybe.
+                      // Let's add cancellation logic here for safety, similar to error handling.
+                       if (isRecording) {
+                           Log.w(TAG, "ACTION_CANCEL received while recording, cancelling Baidu ASR.")
+                           asrEventManager?.send(SpeechConstant.ASR_CANCEL, null, null, 0, 0)
+                           isRecording = false
+                           isQueryPending.set(false)
+                       }
+                      return@setOnTouchListener false // Don't consume CANCEL typically
+                  }
+              }
+              // Default: don't consume the event (return false)
+              false
+          }
+      }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.d(TAG, "onStartCommand called, action: ${intent?.action}, startId: $startId")
@@ -579,6 +565,12 @@ class OverlayService : Service(), RecognitionListener, TextToSpeech.OnInitListen
             mediaProjection = null
             isQueryPending.set(false) // Reset flag
             Toast.makeText(this@OverlayService, "屏幕捕获已停止", Toast.LENGTH_SHORT).show()
+            // Maybe stop Baidu ASR if it's running?
+            if (isRecording) {
+                 Log.w(TAG, "MediaProjection stopped, cancelling Baidu ASR.")
+                 asrEventManager?.send(SpeechConstant.ASR_CANCEL, null, null, 0, 0)
+                 isRecording = false
+            }
         }
     }
 
@@ -648,39 +640,20 @@ class OverlayService : Service(), RecognitionListener, TextToSpeech.OnInitListen
     override fun onDestroy() {
         super.onDestroy()
         Log.d(TAG, "onDestroy called")
-        isQueryPending.set(false) // Ensure flag is reset on destroy
-        if (overlayView != null) {
-            try {
-                windowManager.removeView(overlayView)
-                overlayView = null // Clear reference
-                Log.d(TAG, "Overlay view removed.")
-            } catch (e: Exception) {
-                 Log.e(TAG, "Error removing overlay view: ${e.message}")
-            }
-        }
-        try {
-            mediaProjection?.unregisterCallback(MediaProjectionCallback()) } catch (e:Exception) {} // Unregister callback too
-        try {
-            mediaProjection?.stop()
-            Log.d(TAG, "MediaProjection stopped.")
-        } catch (e: Exception) {
-            Log.e(TAG, "Error stopping media projection: ${e.message}")
-        }
-        mediaProjection = null // Clear reference
-        releaseScreenCaptureComponents() // Release VD/IR
-        // Stop foreground service state
+        isQueryPending.set(false)
+        if (overlayView != null) { try { windowManager.removeView(overlayView); overlayView = null; Log.d(TAG, "Overlay view removed.") } catch (e: Exception) { Log.e(TAG, "Error removing overlay view: ${e.message}") } }
+        try { mediaProjection?.unregisterCallback(MediaProjectionCallback()) } catch (e:Exception) {}
+        try { mediaProjection?.stop(); Log.d(TAG, "MediaProjection stopped.") } catch (e: Exception) { Log.e(TAG, "Error stopping media projection: ${e.message}") }
+        mediaProjection = null
+        releaseScreenCaptureComponents()
         stopForeground(true)
         Log.d(TAG, "Service stopped foreground state.")
 
-        // Release SpeechRecognizer
-         try {
-            speechRecognizer?.stopListening()
-            speechRecognizer?.destroy()
-            Log.d(TAG, "SpeechRecognizer destroyed.")
-        } catch (e: Exception) {
-            Log.e(TAG, "Error destroying SpeechRecognizer: ${e.message}")
-        }
-        speechRecognizer = null
+        // --- Release Baidu ASR Resources ---
+        asrEventManager?.send(SpeechConstant.ASR_CANCEL, null, null, 0, 0) // Cancel any ongoing process
+        asrEventManager?.unregisterListener(this) // Unregister listener
+        asrEventManager = null // Release reference
+        Log.d(TAG, "Baidu ASR EventManager unregistered and released.")
 
         // Release TextToSpeech
          try {
@@ -693,16 +666,10 @@ class OverlayService : Service(), RecognitionListener, TextToSpeech.OnInitListen
         textToSpeech = null
         ttsReady = false
 
-        // Clean up screen capture resources
-        // releaseScreenCaptureComponents() // Already called above
-
-        // TODO: Release AIAnalyzer resources here?
-
-        // Recycle any leftover bitmap
         capturedBitmapForAnalysis?.recycle()
         capturedBitmapForAnalysis = null
 
-        aiAnalyzer.cancelJobs() // Cancel any ongoing AI calls
+        aiAnalyzer.cancelJobs()
 
         Log.d(TAG, "Service destroyed.")
     }
@@ -716,92 +683,9 @@ class OverlayService : Service(), RecognitionListener, TextToSpeech.OnInitListen
      }
 
     override fun onBind(intent: Intent?): IBinder? {
+        // This service is started, not bound. Return null.
         return null
     }
-
-    // --- RecognitionListener Methods ---
-
-    override fun onReadyForSpeech(params: Bundle?) {
-        Log.d(TAG, "SpeechRecognizer: Ready for speech")
-        Toast.makeText(this, "请说话...", Toast.LENGTH_SHORT).show()
-    }
-
-    override fun onBeginningOfSpeech() {
-        Log.d(TAG, "SpeechRecognizer: Beginning of speech")
-    }
-
-    override fun onRmsChanged(rmsdB: Float) { }
-
-    override fun onBufferReceived(buffer: ByteArray?) { }
-
-    override fun onEndOfSpeech() {
-        Log.d(TAG, "SpeechRecognizer: End of speech")
-    }
-
-    override fun onError(error: Int) {
-        val errorMessage = getSpeechErrorText(error)
-        Log.e(TAG, "SR Error $error: $errorMessage")
-        Toast.makeText(this, "语音识别错误: $errorMessage", Toast.LENGTH_SHORT).show()
-        isRecording = false
-        overlayView?.findViewById<ImageView>(R.id.overlay_button)?.alpha = 1.0f
-        isQueryPending.set(false) // Reset pending flag on SR error
-        capturedBitmapForAnalysis?.recycle()
-        capturedBitmapForAnalysis = null
-    }
-
-    override fun onResults(results: Bundle?) {
-        Log.d(TAG, "SR onResults")
-        isRecording = false
-        overlayView?.findViewById<ImageView>(R.id.overlay_button)?.alpha = 1.0f
-
-        val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-        if (matches != null && matches.isNotEmpty()) {
-            val userQuery = matches[0]
-            Log.i(TAG, "Recognized: $userQuery")
-            Toast.makeText(this, "识别结果: $userQuery", Toast.LENGTH_SHORT).show()
-
-            val bitmapToSend = capturedBitmapForAnalysis
-            capturedBitmapForAnalysis = null
-
-            if (bitmapToSend != null) {
-                 Log.i(TAG, "Bitmap found, sending text and bitmap to AI.")
-                 sendToAI(bitmapToSend, userQuery)
-            } else {
-                 Log.w(TAG, "Bitmap not available when SR results arrived. Sending text only.")
-                 sendToAI(null, userQuery)
-                 // isQueryPending should have been reset by the listener or an error
-            }
-        } else {
-             Log.w(TAG, "SR: No results."); Toast.makeText(this, "未能识别语音", Toast.LENGTH_SHORT).show()
-             isQueryPending.set(false) // Reset pending flag if SR had no results
-             capturedBitmapForAnalysis?.recycle()
-             capturedBitmapForAnalysis = null
-        }
-    }
-
-    override fun onPartialResults(partialResults: Bundle?) {
-        Log.d(TAG, "SpeechRecognizer: Partial results")
-    }
-
-    override fun onEvent(eventType: Int, params: Bundle?) { }
-
-     // Helper function for readable speech errors
-     private fun getSpeechErrorText(errorCode: Int): String {
-        return when (errorCode) {
-            SpeechRecognizer.ERROR_AUDIO -> "音频错误"
-            SpeechRecognizer.ERROR_CLIENT -> "客户端错误"
-            SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "权限不足"
-            SpeechRecognizer.ERROR_NETWORK -> "网络错误"
-            SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "网络超时"
-            SpeechRecognizer.ERROR_NO_MATCH -> "未匹配到结果"
-            SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "识别服务忙碌"
-            SpeechRecognizer.ERROR_SERVER -> "服务端错误"
-            SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "无语音输入超时"
-            else -> "未知语音错误 ($errorCode)"
-        }
-    }
-
-    // --- End RecognitionListener Methods ---
 
     // --- NEW Async Screen Capture (stores result in member var) ---
     private fun requestScreenCapture() {
@@ -994,4 +878,205 @@ class OverlayService : Service(), RecognitionListener, TextToSpeech.OnInitListen
             }
         }
     }
+
+    // --- Implement Baidu EventListener Method --- //
+    // Make sure the signature matches the Baidu EventListener interface exactly
+    override fun onEvent(name: String?, params: String?, data: ByteArray?, offset: Int, length: Int) {
+         val eventTime = System.currentTimeMillis()
+         var logMessage = "Baidu ASR event: name=$name"
+         if (params != null && params.isNotEmpty()) logMessage += ", params=$params"
+
+         when (name) {
+             SpeechConstant.CALLBACK_EVENT_ASR_READY -> {
+                 // Engine ready, can start speaking
+                 Log.d(TAG, logMessage)
+                 handler.post { Toast.makeText(this, "请说话...", Toast.LENGTH_SHORT).show() }
+             }
+             SpeechConstant.CALLBACK_EVENT_ASR_BEGIN -> {
+                 // Detected user start speaking
+                 Log.d(TAG, logMessage)
+                 // handler.post { Toast.makeText(this, "检测到说话", Toast.LENGTH_SHORT).show() } // Optional
+             }
+             SpeechConstant.CALLBACK_EVENT_ASR_END -> {
+                 // Detected user stop speaking
+                 Log.d(TAG, logMessage)
+                 // handler.post { Toast.makeText(this, "检测到语音结束", Toast.LENGTH_SHORT).show() } // Optional
+             }
+             SpeechConstant.CALLBACK_EVENT_ASR_PARTIAL -> {
+                 // Partial recognition results
+                 // Log.v(TAG, logMessage) // Can be verbose
+                 val result = parseResult(params)
+                 if (result != null) {
+                      // Maybe update UI with partial result? For now, just log.
+                      val currentPartial = result.bestResult // Assuming parseResult gives partial here too
+                      if (!currentPartial.isNullOrBlank()) {
+                          Log.d(TAG, "Partial result: $currentPartial")
+                          // --- Store the latest non-empty partial result ---
+                          lastPartialResult = currentPartial
+                          // --- End store ---
+                      }
+                 }
+             }
+             SpeechConstant.CALLBACK_EVENT_ASR_FINISH -> {
+                 // Final recognition results (even if empty)
+                 Log.i(TAG, logMessage)
+                 val result = parseResult(params) // Parse finish event (might contain error info)
+                 // --- Get the best result from the stored last partial result ---
+                 val bestResult = lastPartialResult
+                 lastPartialResult = null // Clear after use
+                 // --- End get best result ---
+
+                 // --- Reset state ---
+                 // isRecording should have been set to false on click/stop already
+                 // Or should we reset it here based on ASR_EXIT? Let's reset here on finish/error too for safety.
+                 isRecording = false
+                 isEngineReadyForNext = true // <<< ADD: Set engine ready flag
+                 handler.post { overlayView?.findViewById<ImageView>(R.id.overlay_button)?.alpha = 1.0f }
+
+                 // --- Check if the finish event indicates success (error code 0) ---
+                 val isSuccess = (result?.errorCode == 0 || (result?.errorCode == -1 && bestResult != null)) // Check error code from finish event or if we have a partial result
+
+                 if (isSuccess && bestResult != null && bestResult.isNotEmpty()) {
+                 // --- End check ---
+                     Log.i(TAG, "Final Result (from last partial): $bestResult")
+                     // Retrieve captured bitmap and send to AI
+                      val bitmapToSend = capturedBitmapForAnalysis
+                      capturedBitmapForAnalysis = null // Clear after getting reference
+
+                     if (bitmapToSend != null) {
+                         Log.i(TAG, "Bitmap found, sending text and bitmap to AI.")
+                         sendToAI(bitmapToSend, bestResult)
+                     } else {
+                         Log.w(TAG, "Bitmap not available when SR results arrived. Sending text only.")
+                          sendToAI(null, bestResult)
+                         // isQueryPending should have been reset by the capture listener or error
+                     }
+                 }
+                 // --- Use the error code from the FINISH event for error reporting ---
+                 else if (result?.errorCode != 0 && result?.errorCode != -1) {
+                      Log.w(TAG, "Baidu ASR Error on Finish: ${result?.errorDetail} (${result?.errorCode})")
+                      isQueryPending.set(false)
+                      capturedBitmapForAnalysis?.recycle()
+                      capturedBitmapForAnalysis = null
+                      val errorMsg = result?.errorDetail ?: "未能识别语音"
+                      handler.post { Toast.makeText(this, errorMsg, Toast.LENGTH_SHORT).show() }
+                 } else {
+                 // --- Fallback if no error but also no partial result was stored ---
+                      Log.w(TAG, "Baidu ASR: No final result available (success event but no prior partial result).")
+                 // --- End fallback ---
+                      isQueryPending.set(false)
+                      capturedBitmapForAnalysis?.recycle() // Clean up bitmap if ASR failed
+                      capturedBitmapForAnalysis = null
+                      // Show error based on result object?
+                     // val errorMsg = if (result?.errorDetail != null) result.errorDetail else "未能识别语音" // Don't show toast if success but no result
+                     // handler.post { Toast.makeText(this, errorMsg, Toast.LENGTH_SHORT).show() }
+                 }
+             }
+             SpeechConstant.CALLBACK_EVENT_ASR_EXIT -> {
+                 // Recognizer exited (called after ASR_FINISH or ASR_ERROR)
+                 Log.d(TAG, logMessage)
+                 // Final state reset confirmation
+                  isRecording = false
+                  isEngineReadyForNext = true // <<< ADD: Set engine ready flag
+                  handler.post { overlayView?.findViewById<ImageView>(R.id.overlay_button)?.alpha = 1.0f }
+                  // isQueryPending should be false now due to finish/error handling above
+             }
+             SpeechConstant.CALLBACK_EVENT_ASR_ERROR -> {
+                 // Recognition error
+                 Log.e(TAG, logMessage) // Log full params for error details
+                 val result = parseResult(params) // Try to parse error details
+                 val errorCode = result?.errorCode ?: -1
+                 val errorDetail = result?.errorDetail ?: "未知语音错误"
+                 lastPartialResult = null // Clear any stored partial result on error
+
+                 // --- Reset state ---
+                 isRecording = false
+                 isQueryPending.set(false) // Reset capture flag on error
+                 isEngineReadyForNext = true // <<< ADD: Set engine ready flag on error too
+                 handler.post {
+                     overlayView?.findViewById<ImageView>(R.id.overlay_button)?.alpha = 1.0f
+                     Toast.makeText(this, "语音识别错误: $errorDetail ($errorCode)", Toast.LENGTH_LONG).show()
+                 }
+                 capturedBitmapForAnalysis?.recycle()
+                 capturedBitmapForAnalysis = null
+             }
+             SpeechConstant.CALLBACK_EVENT_ASR_CANCEL -> {
+                  Log.w(TAG, logMessage)
+                  lastPartialResult = null // Clear any stored partial result on cancel
+                  // Reset state if cancelled externally (e.g., by drag)
+                  isRecording = false
+                  isQueryPending.set(false)
+                  isEngineReadyForNext = true // <<< ADD: Set engine ready flag on cancel
+                  handler.post { overlayView?.findViewById<ImageView>(R.id.overlay_button)?.alpha = 1.0f }
+                  capturedBitmapForAnalysis?.recycle()
+                  capturedBitmapForAnalysis = null
+             }
+             // Handle other events if needed (e.g., VOLUME, LONG_SPEECH)
+             else -> {
+                 // Log unhandled events
+                 // Log.v(TAG, logMessage)
+             }
+         }
+    }
+
+     // Helper to parse Baidu ASR results/errors from JSON params
+     private data class BaiduAsrResult(
+         val bestResult: String?,
+         val resultsRecognition: List<String>?,
+         val errorCode: Int?,
+         val errorDetail: String?,
+         val subErrorCode: Int?,
+         val desc: String?
+     )
+
+    private fun parseResult(jsonParams: String?): BaiduAsrResult? {
+        if (jsonParams == null || jsonParams.isEmpty()) return null
+        try {
+            val json = JSONObject(jsonParams)
+
+             val bestResult = json.optJSONArray("results_recognition")?.optString(0)
+             val resultsRecognition = json.optJSONArray("results_recognition")?.let { arr ->
+                 (0 until arr.length()).map { arr.getString(it) }
+             }
+
+             // Prefer err_no if available, otherwise use error
+             var errorCode = json.optInt("err_no", -1)
+             if (errorCode == -1) { // Fallback to "error" field if "err_no" not present or -1
+                 errorCode = json.optInt("error", -1)
+             }
+             var errorDetail = json.optString("desc", null)
+             var subErrorCode = json.optInt("sub_error", -1)
+
+             // Sometimes error details are in 'origin_result' for ASR_FINISH on error
+             if (json.has("origin_result")) {
+                 try {
+                      val originResult = JSONObject(json.getString("origin_result"))
+                      if (originResult.has("err_no") && originResult.getInt("err_no") != 0) {
+                          errorCode = originResult.optInt("err_no", errorCode)
+                          errorDetail = originResult.optString("err_msg", errorDetail)
+                      }
+                 } catch (e: JSONException) { /* Ignore inner parse error */ }
+             }
+
+             // Check for standard error fields if not found in origin_result
+             if (errorCode == -1 && json.has("errorNum")) errorCode = json.getInt("errorNum") // Alternate names?
+             if (errorDetail == null && json.has("errorDetail")) errorDetail = json.getString("errorDetail")
+
+             // If desc is generic success message but we have a more specific error, keep errorDetail
+             if (errorDetail != null && errorDetail != "Speech Recognize success.") {
+                  // Keep the more specific error detail
+             } else if (errorDetail != null && errorDetail != "Speech Recognize success.") {
+                 // Already have errorDetail, no need to re-assign if it's not the success message
+                 // errorDetail = errorDetail // This line is redundant, can be removed or kept for clarity
+             }
+
+             // The 'desc' field in the BaiduAsrResult data class was intended to hold the final description, which is errorDetail here.
+             return BaiduAsrResult(bestResult, resultsRecognition, errorCode, errorDetail, subErrorCode, errorDetail)
+
+        } catch (e: JSONException) {
+            Log.e(TAG, "Error parsing Baidu ASR JSON parameters: $jsonParams", e)
+            return null
+        }
+    }
+    // --- End Baidu EventListener ---
 } 
