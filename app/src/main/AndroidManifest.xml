@@ -6,6 +6,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -20,6 +21,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.ElderHelper"
         tools:targetApi="31">
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -36,13 +38,13 @@
         <service
             android:name=".OverlayService"
             android:exported="false"
-            android:foregroundServiceType="mediaProjection|specialUse" />
+            android:foregroundServiceType="mediaProjection|microphone|specialUse" />
 
-        <!-- 屏幕捕获服务 (用于MediaProjection) -->
+        <!-- 屏幕捕获服务，用于后续独立 MediaProjection 能力扩展。 -->
         <service
             android:name=".ScreenCaptureService"
-            android:foregroundServiceType="mediaProjection"
-            android:exported="false" />
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
 
     </application>
 

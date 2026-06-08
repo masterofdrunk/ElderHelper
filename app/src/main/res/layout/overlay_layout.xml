@@ -1,15 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="wrap_content"
-    android:layout_height="wrap_content">
+    android:layout_height="wrap_content"
+    android:gravity="center_horizontal"
+    android:orientation="vertical">
 
     <ImageView
         android:id="@+id/overlay_button"
         android:layout_width="64dp"
         android:layout_height="64dp"
-        android:src="@mipmap/ic_launcher_round"  />
-        <!-- 使用应用图标作为示例，可以替换为麦克风等图标 -->
-        <!-- android:background="?attr/selectableItemBackgroundBorderless" --> <!-- Optional: add ripple effect -->
-        <!-- android:padding="8dp" --> <!-- Optional: add padding -->
+        android:contentDescription="@string/app_name"
+        android:src="@mipmap/ic_launcher_round" />
 
-</FrameLayout> 
+    <TextView
+        android:id="@+id/overlay_status_text"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:background="@drawable/overlay_status_background"
+        android:maxWidth="220dp"
+        android:paddingHorizontal="12dp"
+        android:paddingVertical="8dp"
+        android:textColor="@android:color/white"
+        android:textSize="14sp"
+        android:visibility="gone" />
+
+</LinearLayout>

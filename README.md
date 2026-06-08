@@ -1,115 +1,154 @@
-这是一个利用ai帮助中老年人使用手机的app
-由于苹果的隐私限制所以暂时只有Android版本
-且demo版本ui不好看，功能不稳定
-目前多模态大模型使用的是gemini，对国内用户不是很友好，但是gemini送了500刀😄
-# Elder Helper (老年人助手)
+# ElderHelper
 
-## 简要描述
+ElderHelper 是一个面向老年用户的 Android 本地优先手机助手。用户通过悬浮按钮语音提问，应用在本机完成语音识别、截屏、看屏分析和语音播报，目标是在不默认上传截图、录音、识别文本或问题内容的前提下，帮助用户理解当前手机界面并完成常见操作。
 
-Elder Helper 是一款旨在帮助老年人更方便地使用智能手机的 Android 应用。它提供一个悬浮按钮，用户可以通过语音提问，并结合当前屏幕内容，获取 AI 的帮助和指导，让复杂的操作变得简单。
+## 当前状态
 
-## 主要功能
+项目正在从早期云端原型迁移到本地优先 MVP。当前默认路径不再依赖 Gemini 或百度语音 SDK：
 
-*   **悬浮助手按钮**: 一个可拖动的悬浮按钮，常驻屏幕边缘，方便随时调用。
-*   **语音交互**: 点击按钮后，可通过中文语音进行提问或发出指令。
-*   **屏幕理解**: 在语音提问的同时，应用会截取当前屏幕内容。
-*   **多模态 AI 分析**: 将语音识别的文本和屏幕截图发送给多模态大模型 (当前配置为 Google Gemini 1.5 Flash) 进行分析。
-*   **语音播报 (TTS)**: 将 AI 模型的回复通过语音清晰地播报给用户。
-*   **权限引导**: 应用启动时会引导用户授予必要的权限。
+```text
+悬浮按钮
+  -> 本地语音识别 sherpa-onnx
+  -> MediaProjection 截屏
+  -> 本地看屏分析接口 MiniCPM-V 路线
+  -> Android 系统 TTS 播报
+```
 
-## 环境要求
+## 已完成
 
-*   Android Studio (建议使用最新稳定版)
-*   Android SDK (根据项目 `build.gradle.kts` 配置，例如 `minSdk = 24`, `compileSdk = 35`)
-*   一台 Android 设备或模拟器 (建议 Android 7.0 Nougat 或更高版本)
-*   稳定的网络连接 (用于 AI API 调用)
+- 恢复并简化 `OverlayService`，保留悬浮窗、拖动、前台服务通知和点击交互。
+- 抽象出本地优先接口：
+  - `SpeechToTextEngine`
+  - `ScreenCaptureProvider`
+  - `ScreenAnalyzer`
+  - `SpeechSpeaker`
+  - `ModelAssetManager`
+  - `SensitiveOperationGuard`
+- 移除默认 Gemini SDK 和 API key 注入。
+- 移除默认百度语音 native 库。
+- 修复 Android 14/15 前台服务麦克风类型问题，解决 `RECORD_AUDIO` AppOps 拒绝。
+- 移除后台 Toast 反馈，改为悬浮窗内部状态提示，避免系统压制后台 Toast。
+- 接入 sherpa-onnx Android JNI runtime。
+- 实现本地中文 STT：
+  - 录音 PCM 采集
+  - PCM16LE 转 float samples
+  - 本地 Paraformer 模型解码
+  - 缺模型、缺运行库、空语音的中文提示
+- 选定 M4 看屏路线：
+  - OpenBMB MiniCPM-V-Apps Android demo
+  - llama.cpp 端侧运行
+  - GGUF 模型格式
+  - `arm64-v8a` 真机验证
+- 增加截图压缩预处理和 `MiniCpmVRuntime` 边界，为 MiniCPM-V native 接入做准备。
 
-## 安装与设置
+## 已验证
 
-1.  **克隆仓库**:
-    ```bash
-    git clone <your-repository-url> # 替换为您的仓库 URL
-    cd elderhelper
-    ```
+本地环境：
 
-2.  **获取 API 密钥**:
-    *   您需要一个 Google Gemini API 密钥才能使用 AI 功能。
-    *   前往 [Google AI Studio](https://aistudio.google.com/app/apikey) 获取您的密钥。
+- Android Studio JBR / OpenJDK 21
+- Android SDK API 35
+- AVD: `ElderHelper_API35`
 
-3.  **配置 API 密钥**:
-    *   在项目的**根目录**下 (与 `app` 文件夹同级)，创建一个名为 `local.properties` 的文件（如果它尚不存在）。
-    *   在该文件中添加以下一行，并将 `<YOUR_GEMINI_API_KEY>` 替换为您在步骤 2 中获取的真实密钥:
-        ```properties
-        GEMINI_API_KEY=<YOUR_GEMINI_API_KEY>
-        ```
-    *   **安全提示**: 确保 `local.properties` 文件已被添加到项目的 `.gitignore` 文件中，以防止意外将您的密钥上传到代码仓库。`.gitignore` 文件中应包含 `/local.properties` 这一行。
+已通过：
 
-4.  **构建项目**:
-    *   使用 Android Studio 打开项目。
-    *   等待 Android Studio 完成 Gradle 同步（可能需要下载依赖项）。如果遇到问题，可以尝试菜单中的 **File > Sync Project with Gradle Files**。
-    *   构建项目 (**Build > Make Project** 或 **Build > Rebuild Project**)。
+```powershell
+.\gradlew.bat :app:assembleDebug
+.\gradlew.bat :app:testDebugUnitTest
+.\gradlew.bat :app:connectedDebugAndroidTest
+```
 
-## 使用说明
+本地 STT 已验证：
 
-1.  **启动应用**: 在 Android Studio 中运行应用到连接的设备或模拟器上。
-2.  **授予权限**:
-    *   应用首次启动时会进入一个权限检查界面。
-    *   点击界面上的按钮 (通常显示为 "检查并请求权限" 或类似文本)。
-    *   系统会弹出请求权限的对话框。请务必授予以下所有权限：
-        *   **录音权限 (Record Audio)**：用于语音输入。
-        *   **悬浮窗权限 (Display over other apps / System Alert Window)**：用于显示悬浮按钮。这可能需要跳转到系统设置页面手动开启。
-        *   **屏幕捕获权限 (Screen Capture)**：用于理解屏幕内容。这通常会在您第一次尝试启动服务时弹出一次性确认框。
-    *   请按照提示完成所有权限的授予。按钮文本会更新以反映当前的权限状态。
-3.  **启动服务**: 当所有必要权限都授予后，主界面上的按钮文本会变为类似 "启动助手服务"。点击此按钮。
-4.  **使用悬浮按钮**:
-    *   屏幕上会出现一个助手悬浮按钮。
-    *   **长按并拖动**按钮可以将其移动到屏幕上您觉得方便的位置。
-    *   **单击**悬浮按钮。
-    *   您会听到或看到提示 "请说话..."。
-    *   此时，请用**中文**清晰地说出您的问题或指令 (例如：“微信怎么加好友？”、“这个付款按钮在哪里？”)。
-    *   说完后，请**等待一小会儿**，不要再次点击按钮。应用会自动检测语音结束。
-    *   应用会将您的语音问题（转换为文本）和当前的屏幕截图发送给 AI 进行分析。
-    *   耐心等待片刻，AI 的回复将通过语音播报出来。
-    *   一次交互完成后，您可以再次单击按钮开始新的提问。
+- sherpa-onnx native recognizer 可在 Android 15 模拟器解码官方中文/英文测试 wav。
+- `SherpaOnnxSttEngine` 可通过同一套本地模型完成解码。
+- 关闭模拟器网络后，本地 STT instrumentation 测试仍通过。
+- 悬浮窗麦克风流程已走到“语音识别成功 -> 看屏模型未安装”分支，说明 STT 端到端路径已打通。
 
-## 所需权限
+## 本地模型
 
-应用正常运行需要以下 Android 权限：
+### ASR 模型
 
-*   `android.permission.RECORD_AUDIO`: 用于语音识别。
-*   `android.permission.SYSTEM_ALERT_WINDOW`: 用于显示悬浮窗。
-*   `android.permission.FOREGROUND_SERVICE`: 用于让服务在后台稳定运行。
-*   `android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION` (Android 10+): 明确前台服务类型为屏幕捕获。
-*   `android.permission.INTERNET`: 用于调用 AI API。
+当前 STT PoC 使用 sherpa-onnx 官方中文/英文小模型：
 
-## 未来可扩展方向 (TODO)
+- Runtime: `sherpa-onnx-v1.13.2-android`
+- Model: `sherpa-onnx-paraformer-zh-small-2024-03-09`
 
-*   [ ] 优化对 AI 的提示 (Prompt Engineering)，以获得更准确、更符合老年人习惯的回复。
-*   [ ] 探索支持更自然的连续对话能力。
-*   [ ] 增加设置选项，允许用户自定义悬浮窗外观、TTS 语速、音量等。
-*   [ ] 考虑加入视觉指示，例如在 AI 回复中高亮屏幕上的相关区域。
-*   [ ] 评估和适配其他优秀的（国内）多模态大模型 API。
-*   [ ] 添加更完善的错误处理和用户反馈机制。
+App 私有目录：
 
----
+```text
+/data/user/0/com.example.elderhelper/files/sherpa-onnx/asr/
+  model.int8.onnx
+  tokens.txt
+```
 
-## 近期更新说明 (2025-04-10) 
+详细安装步骤见 [docs/local-stt-model.md](docs/local-stt-model.md)。
 
-本次更新主要围绕集成百度语音识别 SDK 并解决相关问题展开，同时优化了交互流程：
+### 看屏模型
 
-*   **集成百度语音识别 (ASR)**:
-    *   引入了百度语音识别 SDK 以支持中文语音输入。
-    *   增加了对百度 `APP_ID`, `API_KEY`, `SECRET_KEY` 的配置需求（通过 `local.properties`）。
-    *   添加了放置百度 SDK 相关文件（`.jar`, `.so`, `assets` 资源）的说明。
-*   **交互流程变更**:
-    *   语音输入的交互方式改为：**单击按钮开始录音，再次单击按钮结束录音**。暂时移除了基于 VAD 的自动语音结束检测，以解决 VAD 组件初始化问题。
-*   **问题修复**:
-    *   解决了百度 SDK 的 `-3004` 鉴权失败错误，强调了在百度云控制台核对密钥和绑定包名的重要性。
-    *   解决了 VAD 初始化失败 (`VAD is not available`) 的问题。
-    *   通过引入状态管理 (`isEngineReadyForNext`) 修复了连续快速点击时可能出现的 "ASR Engine is busy" 错误。
-    *   修复了因缺少 `ACCESS_NETWORK_STATE` 权限导致的崩溃。
-    *   解决了集成过程中遇到的各种编译和构建错误（如 `BuildConfig` 无法解析、`R.jar` 文件锁定等）。
+当前 M4 路线参考 OpenBMB 官方 Android demo：
 
-核心的 AI 分析功能仍由 Google Gemini 实现，结合了语音识别结果和屏幕截图信息。
+- Runtime: llama.cpp on device
+- ABI: `arm64-v8a`
+- 推荐内存：至少 6 GB
+- Model: `MiniCPM-V-4_6-Q4_K_M.gguf`
+- Projector: `mmproj-model-f16.gguf`
 
----
+App 私有目录：
+
+```text
+/data/user/0/com.example.elderhelper/files/models/minicpm-v/
+  MiniCPM-V-4_6-Q4_K_M.gguf
+  mmproj-model-f16.gguf
+```
+
+详细说明见 [docs/local-screen-model.md](docs/local-screen-model.md)。
+
+## 权限
+
+当前 MVP 需要：
+
+- `RECORD_AUDIO`：语音提问。
+- `SYSTEM_ALERT_WINDOW`：显示悬浮按钮。
+- `FOREGROUND_SERVICE`：维持助手服务。
+- `FOREGROUND_SERVICE_MICROPHONE`：Android 14/15 麦克风前台服务类型。
+- `FOREGROUND_SERVICE_MEDIA_PROJECTION`：截屏前台服务类型。
+- `FOREGROUND_SERVICE_SPECIAL_USE`：悬浮助手服务声明。
+- `INTERNET`：当前默认路径不上传数据，后续可用于模型下载或用户显式授权的云端 fallback。
+
+## 如何构建
+
+Windows PowerShell 示例：
+
+```powershell
+$env:JAVA_HOME = "D:\AndroidStudio\jbr"
+$env:Path = "$env:JAVA_HOME\bin;$env:Path"
+.\gradlew.bat :app:assembleDebug
+```
+
+APK 输出：
+
+```text
+app/build/outputs/apk/debug/app-debug.apk
+```
+
+## 当前限制
+
+- MiniCPM-V native runtime 尚未接入当前 app，只完成了模型检测、截图压缩和运行时边界。
+- 官方 MiniCPM-V Android demo 目标 ABI 是 `arm64-v8a`，当前 x86_64 AVD 不能真实验证看屏模型。
+- Android 15 MediaProjection 默认可能选择 “A single app”，实际全屏辅助需要用户选择 “Entire screen”。
+- 模拟器上开启全屏录屏后，悬浮按钮有时会显示为黑色方块，需要继续确认是系统录屏保护还是渲染问题。
+
+## 下一步
+
+- 接入 OpenBMB MiniCPM-V Android demo 的 llama.cpp native runtime。
+- 在 `arm64-v8a` 真机上安装 MiniCPM-V GGUF 模型并跑通本地看屏。
+- 用微信、支付宝、系统设置、电话、短信等 5 类截图做离线指导测试。
+- 增加模型状态/设置页，提示用户安装 STT 和看屏模型。
+- 增加隐私说明页和 release 日志保护。
+
+## 参考
+
+- sherpa-onnx Android: https://k2-fsa.github.io/sherpa/onnx/android/index.html
+- sherpa-onnx Paraformer models: https://k2-fsa.github.io/sherpa/onnx/pretrained_models/offline-paraformer/paraformer-models.html
+- MiniCPM-V-Apps Android: https://github.com/OpenBMB/MiniCPM-V-Apps/tree/main/MiniCPM-V-demo-Android
+- MiniCPM-V-Apps download notes: https://github.com/OpenBMB/MiniCPM-V-Apps/blob/main/DOWNLOAD_zh.md

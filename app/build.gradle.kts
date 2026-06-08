@@ -1,16 +1,3 @@
-import java.util.Properties
-import java.io.FileInputStream
-
-// Function to load local properties safely
-fun getLocalProperty(key: String, project: Project): String {
-    val properties = Properties()
-    val localPropertiesFile = project.rootProject.file("local.properties")
-    if (localPropertiesFile.exists()) {
-        properties.load(localPropertiesFile.inputStream())
-    }
-    return properties.getProperty(key, "")
-}
-
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -33,16 +20,6 @@ android {
             useSupportLibrary = true
         }
 
-        // Use getLocalProperty for all keys
-        val geminiApiKey = getLocalProperty("GEMINI_API_KEY", project)
-        if (geminiApiKey.isEmpty()) {
-             println("Warning: GEMINI_API_KEY not found in local.properties. AI features might not work.")
-        }
-        buildConfigField("String", "GEMINI_API_KEY", "\"${geminiApiKey}\"")
-
-        buildConfigField("String", "BAIDU_APP_ID", "\"${getLocalProperty("baidu.appid", project)}\"")
-        buildConfigField("String", "BAIDU_API_KEY", "\"${getLocalProperty("baidu.apikey", project)}\"")
-        buildConfigField("String", "BAIDU_SECRET_KEY", "\"${getLocalProperty("baidu.secretkey", project)}\"")
     }
 
     buildTypes {
@@ -52,9 +29,6 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-             // Ensure release builds also get the GEMINI API key using getLocalProperty
-             val geminiApiKey = getLocalProperty("GEMINI_API_KEY", project)
-             buildConfigField("String", "GEMINI_API_KEY", "\"${geminiApiKey}\"")
         }
         debug {
              // Debug already gets it from defaultConfig
@@ -99,16 +73,5 @@ dependencies {
     androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
-
-    // --- REMOVE Old AI Dependencies (Ensure they are fully removed) --- //
-    // implementation("com.aallam.openai:openai-client:...")
-    // implementation("io.ktor:ktor-client-okhttp:...")
-
-    // --- Ensure Google Generative AI Dependency is Correct --- //
-    // Remove any other potential references to older versions if they exist.
-    implementation("com.google.ai.client.generativeai:generativeai:0.9.0") // Explicitly using 0.4.0
-    // implementation(files("libs/bdasr_V3_20210628_cfe8c44.jar")) // REMOVE direct JAR dependency
-    implementation(files("libs/bdasr_V3_20210628_cfe8c44.jar")) // ADD direct file dependency
-    implementation("androidx.core:core-ktx:1.10.1") // Keep this dependency for app module
 
 }
