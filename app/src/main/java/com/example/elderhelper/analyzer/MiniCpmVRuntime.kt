@@ -10,6 +10,15 @@ interface MiniCpmVRuntime {
         userQuestion: String,
     ): String
 
+    suspend fun analyze(
+        modelPath: String,
+        projectorPath: String,
+        imageJpeg: ByteArray?,
+        userQuestion: String,
+        screenText: String?,
+        isSensitive: Boolean,
+    ): String = analyze(modelPath, projectorPath, imageJpeg, userQuestion)
+
     fun release()
 }
 
@@ -31,4 +40,6 @@ data class MiniCpmVRuntimeInput(
     val projectorFile: File,
     val imageJpeg: ByteArray?,
     val userQuestion: String,
+    val screenText: String? = null,
+    val isSensitive: Boolean = false,
 )

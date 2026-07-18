@@ -1,0 +1,4 @@
+[submodule "third_party/llama.cpp-omni"]
+	path = third_party/llama.cpp-omni
+	url = https://github.com/tc-mb/llama.cpp-omni.git
+	branch = master

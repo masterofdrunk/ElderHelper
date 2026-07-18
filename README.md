@@ -1,127 +1,139 @@
 # ElderHelper
 
-ElderHelper 是一个面向老年用户的 Android 本地优先手机助手。用户通过悬浮按钮语音提问，应用在本机完成语音识别、截屏、看屏分析和语音播报，目标是在不默认上传截图、录音、识别文本或问题内容的前提下，帮助用户理解当前手机界面并完成常见操作。
+ElderHelper 是一个面向老年用户的 Android 本地优先手机助手。用户可以通过悬浮按钮说出问题，应用在手机本机完成语音识别、页面理解、步骤规划与语音播报，帮助用户找到当前页面中的按钮，并安全地完成常见手机操作。
 
-## 当前状态
+项目仍处于开发与真机验证阶段，不建议用于无人陪同的医疗、金融或紧急决策。
 
-项目正在从早期云端原型迁移到本地优先 MVP。当前默认路径不再依赖 Gemini 或百度语音 SDK：
+## 核心能力
+
+- 本地语音识别：使用 sherpa-onnx Paraformer，在设备端将中文语音转为文字。
+- 本地任务路由：优先使用安全规则、App playbook、已批准流程和离线 RAG，证据不足时才调用视觉模型。
+- 离线看屏：通过 MiniCPM-V 4.6、llama.cpp-omni 和 JNI 在 arm64 Android 设备上分析当前截图。
+- 可选快速看屏：无障碍服务只读取当前前台 App 名称和可见文字，用于减少视觉模型调用。
+- 逐步指导：每次只播报短步骤，支持“好了”“没找到”“返回”等恢复与退出指令。
+- 本地流程学习：用户主动发起、审核并保存低风险操作结构；流程过期或 App 不匹配时自动失效。
+- 离线模型管理：应用内下载、断点续传、校验、更新和删除完整模型包。
+- 隐私与安全：默认不上传语音、截图、问题或页面文字，敏感页面只提供边界明确的指导。
+
+## 12 个离线能力包
+
+内置词法 RAG 目前包含 12 个能力包、86 个具名任务。每个任务都有同义问法、页面标签变体、恢复话术和风险等级。
+
+| 能力包 | 覆盖内容 |
+| --- | --- |
+| 电话与通讯录 | 接听与拨号、联系人、短信、未接来电、语音信箱、骚扰拦截、紧急呼叫 |
+| 微信与社交 | 文字、语音、照片、群聊、音视频通话、位置分享、家人协助 |
+| 医疗健康 | 挂号入口、医保服务、报告查询、用药提醒、穿戴数据、家庭医生 |
+| 出行 | 地图导航、公交地铁、叫车、票务、行程分享、紧急联系 |
+| 购物服务 | 买菜外卖、商品搜索、生活缴费、物流、退款售后、社区服务 |
+| 金融防诈 | 支付与转账入口、手机银行、回单查询、诈骗中断、可信家人核对 |
+| 政务 | 政务入口、社保医保、材料准备、12345 等官方热线 |
+| 娱乐学习 | 新闻、音视频、听书、照片回忆、小游戏、课程、广告与订阅退出 |
+| 相机照片文档 | 拍照、相册、截图、分享、扫描、二维码、打印交接 |
+| 设备与无障碍 | Wi-Fi、流量、蓝牙、音量、亮度、字体、语音输入、存储、更新与权限 |
+| 居家与社区 | 社区通知、助餐、家政、维修服务 |
+| 安全与恢复 | 紧急求助、丢失手机、账号恢复、诈骗中断、隐私设置、任务取消 |
+
+知识数据位于：
+
+- `app/src/main/assets/local_help_capability_packs.json`
+- `app/src/main/assets/local_help_knowledge.json`
+
+## 工作流程
 
 ```text
 悬浮按钮
-  -> 本地语音识别 sherpa-onnx
-  -> MediaProjection 截屏
-  -> 本地看屏分析接口 MiniCPM-V 路线
-  -> Android 系统 TTS 播报
+  -> sherpa-onnx 本地语音识别
+  -> 敏感操作与紧急情况规则
+  -> 已批准的本地流程
+  -> 前台 App playbook
+  -> 12 包离线 RAG + 可见页面文字
+  -> 证据不足时才截屏并调用 MiniCPM-V
+  -> Android 系统 TTS 播报下一步
+  -> 等待完成、恢复或退出
 ```
 
-## 已完成
+当前 App playbook 识别系统设置、电话、短信、相机、相册、微信、支付宝、高德地图、百度地图、滴滴、铁路 12306、淘宝、京东、拼多多、美团、饿了么、抖音和快手。涉及付款、下单、身份认证或授权的 App 只提供入口与核对提醒。
 
-- 恢复并简化 `OverlayService`，保留悬浮窗、拖动、前台服务通知和点击交互。
-- 抽象出本地优先接口：
-  - `SpeechToTextEngine`
-  - `ScreenCaptureProvider`
-  - `ScreenAnalyzer`
-  - `SpeechSpeaker`
-  - `ModelAssetManager`
-  - `SensitiveOperationGuard`
-- 移除默认 Gemini SDK 和 API key 注入。
-- 移除默认百度语音 native 库。
-- 修复 Android 14/15 前台服务麦克风类型问题，解决 `RECORD_AUDIO` AppOps 拒绝。
-- 移除后台 Toast 反馈，改为悬浮窗内部状态提示，避免系统压制后台 Toast。
-- 接入 sherpa-onnx Android JNI runtime。
-- 实现本地中文 STT：
-  - 录音 PCM 采集
-  - PCM16LE 转 float samples
-  - 本地 Paraformer 模型解码
-  - 缺模型、缺运行库、空语音的中文提示
-- 选定 M4 看屏路线：
-  - OpenBMB MiniCPM-V-Apps Android demo
-  - llama.cpp 端侧运行
-  - GGUF 模型格式
-  - `arm64-v8a` 真机验证
-- 增加截图压缩预处理和 `MiniCpmVRuntime` 边界，为 MiniCPM-V native 接入做准备。
+## 安全边界
 
-## 已验证
+ElderHelper 是指导助手，不是自动操作工具。
 
-本地环境：
+- 不代替用户点击付款、转账、登录、授权、下单或身份认证。
+- 不索要、保存、复述密码、验证码、银行卡号或身份证号。
+- 不提供医疗诊断、用药剂量判断或治疗建议。
+- 遇到紧急危险时优先提示直接拨打 120、110 或当地紧急电话。
+- 学习模式只保存经审核的通用动作结构，不保存截图、录音、聊天内容、联系人姓名或输入内容。
+- 发布构建禁止记录截图、识别文字、无障碍文字和凭证类内容。
 
-- Android Studio JBR / OpenJDK 21
-- Android SDK API 35
-- AVD: `ElderHelper_API35`
+完整隐私说明可在应用内“隐私”页面查看。
 
-已通过：
+## 离线模型
+
+模型权重不包含在 Git 仓库或基础 APK 中。首次启动后，用户可在“离线”页面下载约 1.7 GB 的完整离线包。
+
+| 用途 | 模型/运行时 | 下载大小 |
+| --- | --- | ---: |
+| 中文语音识别 | sherpa-onnx Paraformer small | 约 78 MB |
+| 看屏语言模型 | MiniCPM-V 4.6 Q4_K_M GGUF | 约 529 MB |
+| 视觉投影模型 | MiniCPM-V 4.6 mmproj f16 | 约 1.1 GB |
+
+下载流程支持 HTTP Range 断点续传、网络与存储检查、文件大小和校验值验证、暂存文件原子激活。MiniCPM-V 默认使用 ModelScope，Hugging Face 作为备用源；ASR 模型来自 sherpa-onnx 官方发布页。
+
+设备要求：
+
+- Android 7.0 或更高版本（API 24+）。
+- 当前原生看屏运行时仅支持 `arm64-v8a`。
+- 建议至少 6 GB 内存和约 2 GB 可用存储空间。
+- MiniCPM-V 的速度取决于设备 CPU 与内存带宽。
+
+模型路径和开发者手动安装方式见：
+
+- [本地语音模型说明](docs/local-stt-model.md)
+- [本地看屏模型说明](docs/local-screen-model.md)
+
+## 权限说明
+
+| 权限/能力 | 用途 | 是否可选 |
+| --- | --- | --- |
+| 麦克风 | 接收语音问题 | 使用语音助手时必需 |
+| 悬浮窗 | 在其他 App 上显示助手按钮和指导 | 使用悬浮助手时必需 |
+| 屏幕捕获 | 在需要视觉证据时读取当前屏幕 | 每次由用户确认 |
+| 无障碍服务 | 读取当前 App 名称和可见文字，加快找按钮 | 可选 |
+| 通知与前台服务 | 在录音、看屏和模型下载期间保持任务可见 | 按 Android 版本需要 |
+| 网络 | 首次下载或更新离线模型 | 模型安装后日常指导不需要 |
+
+## 构建项目
+
+### 环境
+
+- Android Studio 自带 JDK 21
+- Android SDK 35
+- Android NDK `27.0.12077973`
+- CMake `3.22.1`
+- Git submodule 支持
+
+### 克隆
 
 ```powershell
-.\gradlew.bat :app:assembleDebug
-.\gradlew.bat :app:testDebugUnitTest
-.\gradlew.bat :app:connectedDebugAndroidTest
+git clone --recurse-submodules https://github.com/masterofdrunk/ElderHelper.git
+Set-Location ElderHelper
 ```
 
-本地 STT 已验证：
+已有仓库需要初始化原生依赖：
 
-- sherpa-onnx native recognizer 可在 Android 15 模拟器解码官方中文/英文测试 wav。
-- `SherpaOnnxSttEngine` 可通过同一套本地模型完成解码。
-- 关闭模拟器网络后，本地 STT instrumentation 测试仍通过。
-- 悬浮窗麦克风流程已走到“语音识别成功 -> 看屏模型未安装”分支，说明 STT 端到端路径已打通。
-
-## 本地模型
-
-### ASR 模型
-
-当前 STT PoC 使用 sherpa-onnx 官方中文/英文小模型：
-
-- Runtime: `sherpa-onnx-v1.13.2-android`
-- Model: `sherpa-onnx-paraformer-zh-small-2024-03-09`
-
-App 私有目录：
-
-```text
-/data/user/0/com.example.elderhelper/files/sherpa-onnx/asr/
-  model.int8.onnx
-  tokens.txt
+```powershell
+git submodule update --init --recursive
 ```
 
-详细安装步骤见 [docs/local-stt-model.md](docs/local-stt-model.md)。
+`third_party/llama.cpp-omni` 固定到项目验证过的提交。不要直接替换为任意上游版本，否则 MiniCPM-V JNI 接口可能不兼容。
 
-### 看屏模型
+### 编译
 
-当前 M4 路线参考 OpenBMB 官方 Android demo：
-
-- Runtime: llama.cpp on device
-- ABI: `arm64-v8a`
-- 推荐内存：至少 6 GB
-- Model: `MiniCPM-V-4_6-Q4_K_M.gguf`
-- Projector: `mmproj-model-f16.gguf`
-
-App 私有目录：
-
-```text
-/data/user/0/com.example.elderhelper/files/models/minicpm-v/
-  MiniCPM-V-4_6-Q4_K_M.gguf
-  mmproj-model-f16.gguf
-```
-
-详细说明见 [docs/local-screen-model.md](docs/local-screen-model.md)。
-
-## 权限
-
-当前 MVP 需要：
-
-- `RECORD_AUDIO`：语音提问。
-- `SYSTEM_ALERT_WINDOW`：显示悬浮按钮。
-- `FOREGROUND_SERVICE`：维持助手服务。
-- `FOREGROUND_SERVICE_MICROPHONE`：Android 14/15 麦克风前台服务类型。
-- `FOREGROUND_SERVICE_MEDIA_PROJECTION`：截屏前台服务类型。
-- `FOREGROUND_SERVICE_SPECIAL_USE`：悬浮助手服务声明。
-- `INTERNET`：当前默认路径不上传数据，后续可用于模型下载或用户显式授权的云端 fallback。
-
-## 如何构建
-
-Windows PowerShell 示例：
+确保 `local.properties` 指向 Android SDK，然后执行：
 
 ```powershell
 $env:JAVA_HOME = "D:\AndroidStudio\jbr"
-$env:Path = "$env:JAVA_HOME\bin;$env:Path"
 .\gradlew.bat :app:assembleDebug
 ```
 
@@ -131,24 +143,62 @@ APK 输出：
 app/build/outputs/apk/debug/app-debug.apk
 ```
 
+## 测试
+
+```powershell
+$env:JAVA_HOME = "D:\AndroidStudio\jbr"
+.\gradlew.bat :app:testDebugUnitTest
+.\gradlew.bat :app:assembleDebugAndroidTest
+.\gradlew.bat :app:connectedDebugAndroidTest
+```
+
+当前已验证：
+
+- JVM 单元测试通过。
+- Debug APK 和 Android 测试 APK 构建通过。
+- 12 个能力包、86 个任务的数据完整性检查通过。
+- HONOR NTN-AN20（Android 12，arm64-v8a）离线 RAG 仪器测试 3/3 通过。
+- 同一真机可加载 MiniCPM-V 4.6 GGUF 与 projector，并对 360 x 640 中文设置页截图返回本地中文指导。
+- 固定看屏样例中，模型加载约 2.1 秒，系统提示约 8.6 秒，图像预填充约 41.6 秒，生成约 1.9 秒；该数字只代表当前测试设备和样例。
+
+## 项目结构
+
+```text
+app/src/main/
+  assets/          12 个离线能力包与 RAG 知识
+  cpp/             MiniCPM-V / llama.cpp JNI 桥接
+  java/.../
+    accessibility/ 可选页面文字来源
+    agent/         路由、playbook、会话恢复与学习流程
+    analyzer/      RAG、提示构建、截图预处理与视觉运行时
+    model/         模型目录、下载、校验与生命周期管理
+    privacy/       敏感操作保护
+  res/             适老界面、隐私页与无障碍配置
+docs/              模型与产品设计文档
+third_party/       固定版本的原生运行时子模块
+```
+
 ## 当前限制
 
-- MiniCPM-V native runtime 尚未接入当前 app，只完成了模型检测、截图压缩和运行时边界。
-- 官方 MiniCPM-V Android demo 目标 ABI 是 `arm64-v8a`，当前 x86_64 AVD 不能真实验证看屏模型。
-- Android 15 MediaProjection 默认可能选择 “A single app”，实际全屏辅助需要用户选择 “Entire screen”。
-- 模拟器上开启全屏录屏后，悬浮按钮有时会显示为黑色方块，需要继续确认是系统录屏保护还是渲染问题。
+- MiniCPM-V 看屏目前仅支持 arm64-v8a，x86_64 模拟器不能运行该原生模型。
+- 真机视觉推理仍较慢，简单任务会优先走规则、playbook、页面文字和离线 RAG。
+- App playbook 会随第三方 App 版本变化而失效；无法确认页面时会停止猜测并给出恢复提示。
+- Android 系统 TTS 的声音与离线可用性由设备厂商和已安装语音包决定。
+- 尚未完成跨两个 Android 厂商版本的全部 12 包网络关闭验收与老年用户可用性测试。
 
-## 下一步
+## 路线图
 
-- 接入 OpenBMB MiniCPM-V Android demo 的 llama.cpp native runtime。
-- 在 `arm64-v8a` 真机上安装 MiniCPM-V GGUF 模型并跑通本地看屏。
-- 用微信、支付宝、系统设置、电话、短信等 5 类截图做离线指导测试。
-- 增加模型状态/设置页，提示用户安装 STT 和看屏模型。
-- 增加隐私说明页和 release 日志保护。
+- 建立经过用户同意的多设备页面测试集。
+- 对 12 个能力包执行完整网络关闭端到端测试。
+- 分别测量规则/RAG 与 MiniCPM-V 路径的响应时间和任务完成率。
+- 通过目标用户测试继续缩短文案、补齐恢复路径和 App 版本适配。
+- 完成发布签名、依赖许可审查和正式版本分发流程。
 
-## 参考
+详细里程碑见 [plan.md](plan.md)，界面与产品要求见 [docs/FRONTEND_PRODUCT_REQUIREMENTS.md](docs/FRONTEND_PRODUCT_REQUIREMENTS.md)。
 
-- sherpa-onnx Android: https://k2-fsa.github.io/sherpa/onnx/android/index.html
-- sherpa-onnx Paraformer models: https://k2-fsa.github.io/sherpa/onnx/pretrained_models/offline-paraformer/paraformer-models.html
-- MiniCPM-V-Apps Android: https://github.com/OpenBMB/MiniCPM-V-Apps/tree/main/MiniCPM-V-demo-Android
-- MiniCPM-V-Apps download notes: https://github.com/OpenBMB/MiniCPM-V-Apps/blob/main/DOWNLOAD_zh.md
+## 参考项目
+
+- [sherpa-onnx Android](https://k2-fsa.github.io/sherpa/onnx/android/index.html)
+- [MiniCPM-V-Apps Android demo](https://github.com/OpenBMB/MiniCPM-V-Apps/tree/main/MiniCPM-V-demo-Android)
+- [MiniCPM-V-Apps download notes](https://github.com/OpenBMB/MiniCPM-V-Apps/blob/main/DOWNLOAD_zh.md)
+- [llama.cpp-omni](https://github.com/tc-mb/llama.cpp-omni)

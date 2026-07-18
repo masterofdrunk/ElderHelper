@@ -1,0 +1,87 @@
+[
+  {
+    "id": "phone_contacts",
+    "name": "电话与通讯录",
+    "defaultRiskLevel": "LOW",
+    "recoveryInstruction": "请回到“电话”“联系人”或“信息”首页，再告诉我屏幕上能看到什么；陌生号码要求提供验证码时请立即挂断。",
+    "taskIds": ["answer_call", "make_call", "send_sms", "contact_add", "missed_call", "block_nuisance_call", "voicemail", "phone_emergency_call"]
+  },
+  {
+    "id": "wechat_social",
+    "name": "微信与社交",
+    "defaultRiskLevel": "LOW",
+    "recoveryInstruction": "请回到微信首页或已确认的聊天页面，再告诉我底部和右上角能看到哪些按钮；发送前请本人核对联系人或群名。",
+    "taskIds": ["wechat_voice_video", "wechat_send_photo", "wechat_voice_message", "wechat_text_message", "wechat_group_message", "wechat_share_location", "social_family_handoff"]
+  },
+  {
+    "id": "health_care",
+    "name": "医疗健康",
+    "defaultRiskLevel": "GUIDANCE_ONLY",
+    "recoveryInstruction": "请回到医院、医保或健康服务的官方首页重新查找入口；身份认证、报告解读、用药和最终提交必须由本人或专业人员处理。",
+    "taskIds": ["health_appointment", "medical_insurance_entry", "medication_reminder", "health_report", "wearable_health_data", "family_doctor_contact"]
+  },
+  {
+    "id": "travel_mobility",
+    "name": "出行",
+    "defaultRiskLevel": "GUIDANCE_ONLY",
+    "recoveryInstruction": "请回到地图、叫车或票务 App 首页，重新核对出发地、目的地、日期和官方入口；付款和下单由本人确认。",
+    "taskIds": ["public_transit", "trip_share", "map_navigation", "ride_hailing_entry", "ticket_entry", "travel_emergency_contact"]
+  },
+  {
+    "id": "shopping_services",
+    "name": "购物服务",
+    "defaultRiskLevel": "GUIDANCE_ONLY",
+    "recoveryInstruction": "请回到购物或生活服务 App 首页，从搜索或“我的订单”重新进入；付款、退款金额和收货信息必须由本人核对。",
+    "taskIds": ["utility_service_entry", "order_tracking", "refund_entry", "grocery_delivery", "shopping_search", "community_service_entry"]
+  },
+  {
+    "id": "finance_scam_prevention",
+    "name": "金融防诈",
+    "defaultRiskLevel": "GUIDANCE_ONLY",
+    "recoveryInstruction": "请立即停在确认操作之前，只通过银行或平台官方 App、官方电话核实；不要提供密码、验证码、卡号或开启屏幕共享。",
+    "taskIds": ["payment_entry", "transfer_entry", "banking_entry", "receipt_lookup", "finance_fraud_warning", "finance_family_handoff"]
+  },
+  {
+    "id": "government_civic",
+    "name": "政务",
+    "defaultRiskLevel": "GUIDANCE_ONLY",
+    "recoveryInstruction": "请回到当地官方政务服务首页重新搜索事项；身份认证、授权、材料提交和缴费必须由本人完成。",
+    "taskIds": ["government_service_entry", "social_security_entry", "civic_document_preparation", "civic_hotline_handoff"]
+  },
+  {
+    "id": "entertainment_learning",
+    "name": "娱乐学习",
+    "defaultRiskLevel": "LOW",
+    "recoveryInstruction": "请返回内容 App 首页或关闭当前弹窗，再从搜索或播放记录重新进入；遇到付费、订阅、领奖或退款页面先退出。",
+    "taskIds": ["news_reading", "audiobook_entry", "senior_learning", "video_playback", "photo_slideshow", "simple_game_entry", "subscription_escape", "advertisement_exit"]
+  },
+  {
+    "id": "camera_photos_documents",
+    "name": "相机照片文档",
+    "defaultRiskLevel": "LOW",
+    "recoveryInstruction": "请回到相机、相册或文件 App 首页重新选择；分享、删除、打印或上传前请本人核对照片、文件和接收方。",
+    "taskIds": ["camera_photo", "photo_album", "screenshot", "photo_share", "delete_photo", "scan_document", "qr_code_entry", "photo_print_share"]
+  },
+  {
+    "id": "device_accessibility",
+    "name": "设备与无障碍",
+    "defaultRiskLevel": "LOW",
+    "recoveryInstruction": "请回到系统“设置”首页，再按页面名称查找；修改权限、更新系统或删除内容前请本人确认。",
+    "taskIds": ["wifi_connect", "wifi_troubleshoot", "mobile_data", "bluetooth", "volume", "brightness", "font_size", "flashlight", "battery_saver", "airplane_mode", "hotspot", "app_permissions", "storage_cleanup", "system_update", "voice_input", "accessibility_settings"]
+  },
+  {
+    "id": "home_community",
+    "name": "居家与社区",
+    "defaultRiskLevel": "GUIDANCE_ONLY",
+    "recoveryInstruction": "请回到社区或生活服务的官方首页重新搜索，确认服务方、价格和上门时间；付款与门锁等设备控制由本人处理。",
+    "taskIds": ["community_notice", "meal_service_entry", "housekeeping_entry", "repair_service_entry"]
+  },
+  {
+    "id": "safety_resilience",
+    "name": "安全与恢复",
+    "defaultRiskLevel": "GUIDANCE_ONLY",
+    "recoveryInstruction": "请停止当前任务并退出可疑页面，优先联系可信家人或对应官方机构；紧急危险请直接拨打 120、110 或当地紧急电话。",
+    "riskOverrides": {"emergency_call": "URGENT"},
+    "taskIds": ["emergency_call", "lost_phone_recovery", "account_recovery", "scam_interruption", "privacy_settings", "task_cancel", "family_handoff"]
+  }
+]

@@ -27,7 +27,17 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.example.elderhelper.analyzer.LocalFirstScreenAnalyzer
+import com.example.elderhelper.analyzer.AssetLocalKnowledgeRetriever
 import com.example.elderhelper.analyzer.ScreenAnalyzer
+import com.example.elderhelper.analyzer.ScreenGuidanceAgent
+import com.example.elderhelper.analyzer.ScreenGuidancePlan
+import com.example.elderhelper.accessibility.ScreenTextSnapshotStore
+import com.example.elderhelper.agent.GuidanceSessionAction
+import com.example.elderhelper.agent.GuidanceSessionController
+import com.example.elderhelper.agent.LearnedWorkflowIntent
+import com.example.elderhelper.agent.LearnedWorkflowStore
+import com.example.elderhelper.agent.WorkflowTeachingHarness
+import com.example.elderhelper.privacy.SensitiveOperationGuard
 import com.example.elderhelper.screen.MediaProjectionScreenCaptureProvider
 import com.example.elderhelper.screen.ScreenCaptureProvider
 import com.example.elderhelper.speech.SherpaOnnxSttEngine
@@ -51,11 +61,17 @@ class OverlayService : Service() {
     private lateinit var speechEngine: SpeechToTextEngine
     private lateinit var speaker: SpeechSpeaker
     private lateinit var screenAnalyzer: ScreenAnalyzer
+    private val screenGuidanceAgent by lazy { ScreenGuidanceAgent(AssetLocalKnowledgeRetriever(applicationContext)) }
+    private val sensitiveOperationGuard = SensitiveOperationGuard()
+    private val guidanceSession = GuidanceSessionController()
+    private val learnedWorkflowStore by lazy { LearnedWorkflowStore(applicationContext) }
 
     private var screenCaptureProvider: ScreenCaptureProvider? = null
     private var overlayView: View? = null
     private var overlayStatusText: TextView? = null
+    private var overlayReplayText: TextView? = null
     private var overlayMessageClearRunnable: Runnable? = null
+    private var lastGuidance: String? = null
     private var isProcessing = false
     private var wasDragged = false
     private var initialX = 0
@@ -101,6 +117,8 @@ class OverlayService : Service() {
         speechEngine.release()
         speaker.release()
         screenAnalyzer.release()
+        guidanceSession.clear()
+        lastGuidance = null
         serviceScope.cancel()
     }
 
@@ -110,6 +128,7 @@ class OverlayService : Service() {
         val view = LayoutInflater.from(this).inflate(R.layout.overlay_layout, null)
         val overlayButton = view.findViewById<ImageView>(R.id.overlay_button)
         overlayStatusText = view.findViewById(R.id.overlay_status_text)
+        overlayReplayText = view.findViewById(R.id.overlay_replay_text)
 
         val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -141,6 +160,11 @@ class OverlayService : Service() {
         }
         overlayButton.setOnTouchListener { _, event ->
             handleOverlayDrag(event)
+        }
+        overlayReplayText?.setOnClickListener {
+            val guidance = lastGuidance ?: return@setOnClickListener
+            speaker.speak(guidance)
+            showOverlayMessage(guidance, OVERLAY_MESSAGE_LONG_MS)
         }
 
         try {
@@ -201,14 +225,64 @@ class OverlayService : Service() {
             }
             showOverlayMessage("已识别语音，正在分析屏幕")
 
+            val userQuestion = sttResult.text.orEmpty()
+            when (val sessionAction = guidanceSession.handle(userQuestion)) {
+                is GuidanceSessionAction.Reply -> {
+                    Log.i(TAG, "Handled a guidance-session command locally.")
+                    finishInteraction(overlayButton, sessionAction.message)
+                    return@launch
+                }
+                GuidanceSessionAction.NewRequest -> Unit
+            }
+
+            val foregroundScreen = ScreenTextSnapshotStore.snapshot()
+            val screenText = foregroundScreen?.screenText
+            if (WorkflowTeachingHarness.isActive()) {
+                WorkflowTeachingHarness.setGoalFromUserQuestion(userQuestion)
+            } else {
+                val learnedIntent = LearnedWorkflowIntent.fromQuestion(userQuestion)
+                learnedWorkflowStore.find(learnedIntent, foregroundScreen?.packageName)?.let { workflow ->
+                    val guidance = workflow.replayGuidance()
+                    guidanceSession.begin(taskId = "learned:${learnedIntent.name}", instruction = guidance)
+                    Log.i(TAG, "Replayed an approved learned workflow locally.")
+                    finishInteraction(overlayButton, guidance)
+                    return@launch
+                }
+            }
+            val sensitiveWarning = sensitiveOperationGuard.warningFor(userQuestion, screenText)
+            when (
+                val plan = screenGuidanceAgent.plan(
+                    userQuestion = userQuestion,
+                    screenText = screenText,
+                    sensitiveWarning = sensitiveWarning,
+                    foregroundPackage = foregroundScreen?.packageName,
+                )
+            ) {
+                is ScreenGuidancePlan.LocalAnswer -> {
+                    Log.i(TAG, "Screen guidance answered locally before screenshot capture.")
+                    plan.taskId?.let { taskId ->
+                        guidanceSession.begin(
+                            taskId = taskId,
+                            instruction = plan.guidance,
+                            recoveryInstruction = plan.recoveryInstruction
+                                ?: "没关系。请先回到刚才的页面，再说一说屏幕上能看到的文字；我会继续带你找。",
+                        )
+                    }
+                    finishInteraction(overlayButton, plan.guidance)
+                    return@launch
+                }
+                ScreenGuidancePlan.NeedsVisionModel -> Unit
+            }
+
+            showOverlayMessage("正在看屏幕")
             val bitmap = withTimeoutOrNull(CAPTURE_TIMEOUT_MS) {
                 screenCaptureProvider?.capture()
             }
             val analyzerResult = withContext(Dispatchers.Default) {
                 screenAnalyzer.analyze(
                     screenBitmap = bitmap,
-                    screenText = null,
-                    userQuestion = sttResult.text.orEmpty(),
+                    screenText = screenText,
+                    userQuestion = userQuestion,
                 )
             }
             bitmap?.recycle()
@@ -218,6 +292,9 @@ class OverlayService : Service() {
             } else {
                 analyzerResult.errorMessage ?: "暂时无法理解当前屏幕，请稍后再试。"
             }
+            if (analyzerResult.guidance.isNotBlank() && !analyzerResult.isSensitive) {
+                guidanceSession.begin(taskId = "vision-guidance", instruction = message)
+            }
             finishInteraction(overlayButton, message)
         }
     }
@@ -225,7 +302,11 @@ class OverlayService : Service() {
     private fun finishInteraction(overlayButton: ImageView, message: String) {
         isProcessing = false
         overlayButton.alpha = IDLE_ALPHA
+        lastGuidance = message
         speaker.speak(message)
+        mainHandler.post {
+            overlayReplayText?.visibility = View.VISIBLE
+        }
         showOverlayMessage(message, OVERLAY_MESSAGE_LONG_MS)
     }
 
@@ -260,8 +341,8 @@ class OverlayService : Service() {
                 val deltaY = (event.rawY - initialTouchY).toInt()
                 if (kotlin.math.abs(deltaX) > DRAG_THRESHOLD || kotlin.math.abs(deltaY) > DRAG_THRESHOLD) {
                     wasDragged = true
-                    layoutParams.x = initialX + deltaX
-                    layoutParams.y = initialY + deltaY
+                    layoutParams.x = (initialX + deltaX).coerceIn(EDGE_MARGIN_PX, maxOverlayX())
+                    layoutParams.y = (initialY + deltaY).coerceIn(EDGE_MARGIN_PX, maxOverlayY())
                     overlayView?.let { windowManager.updateViewLayout(it, layoutParams) }
                     return true
                 }
@@ -269,6 +350,15 @@ class OverlayService : Service() {
 
             MotionEvent.ACTION_UP -> {
                 if (wasDragged) {
+                    // Keep the control easy to find. A draggable overlay must never be left
+                    // entirely outside the display or hidden under the navigation area.
+                    layoutParams.x = if (layoutParams.x < resources.displayMetrics.widthPixels / 2) {
+                        EDGE_MARGIN_PX
+                    } else {
+                        maxOverlayX()
+                    }
+                    layoutParams.y = layoutParams.y.coerceIn(EDGE_MARGIN_PX, maxOverlayY())
+                    overlayView?.let { windowManager.updateViewLayout(it, layoutParams) }
                     mainHandler.postDelayed({ wasDragged = false }, DRAG_CLICK_RESET_DELAY_MS)
                     return true
                 }
@@ -276,6 +366,18 @@ class OverlayService : Service() {
         }
         return false
     }
+
+    private fun maxOverlayX(): Int = (resources.displayMetrics.widthPixels - overlayWidthPx() - EDGE_MARGIN_PX)
+        .coerceAtLeast(EDGE_MARGIN_PX)
+
+    private fun maxOverlayY(): Int = (resources.displayMetrics.heightPixels - overlayHeightPx() - NAVIGATION_SAFE_AREA_PX)
+        .coerceAtLeast(EDGE_MARGIN_PX)
+
+    private fun overlayWidthPx(): Int = overlayView?.width?.takeIf { it > 0 } ?: overlayButtonSizePx()
+
+    private fun overlayHeightPx(): Int = overlayView?.height?.takeIf { it > 0 } ?: overlayButtonSizePx()
+
+    private fun overlayButtonSizePx(): Int = (58 * resources.displayMetrics.density).toInt()
 
     private fun removeOverlayWindow() {
         val view = overlayView ?: return
@@ -348,6 +450,8 @@ class OverlayService : Service() {
         private const val PROCESSING_ALPHA = 0.75f
         private const val DRAG_THRESHOLD = 15
         private const val DRAG_CLICK_RESET_DELAY_MS = 100L
+        private const val EDGE_MARGIN_PX = 16
+        private const val NAVIGATION_SAFE_AREA_PX = 120
         private const val CAPTURE_TIMEOUT_MS = 2_000L
         private const val OVERLAY_MESSAGE_SHORT_MS = 2_000L
         private const val OVERLAY_MESSAGE_LONG_MS = 4_000L

@@ -5,11 +5,14 @@ import android.graphics.Bitmap
 import com.example.elderhelper.model.ModelAssetManager
 import com.example.elderhelper.privacy.SensitiveOperationGuard
 
-class LocalFirstScreenAnalyzer(
+internal class LocalFirstScreenAnalyzer(
     context: Context,
     private val sensitiveOperationGuard: SensitiveOperationGuard = SensitiveOperationGuard(),
+    private val screenGuidanceAgent: ScreenGuidanceAgent = ScreenGuidanceAgent(
+        AssetLocalKnowledgeRetriever(context.applicationContext),
+    ),
     private val bitmapPreprocessor: ScreenBitmapPreprocessor = ScreenBitmapPreprocessor(),
-    private val runtime: MiniCpmVRuntime = UnavailableMiniCpmVRuntime(),
+    private val runtime: MiniCpmVRuntime = NativeMiniCpmVRuntime(context.applicationContext),
 ) : ScreenAnalyzer {
     private val modelAssetManager = ModelAssetManager(context)
 
@@ -19,6 +22,26 @@ class LocalFirstScreenAnalyzer(
         userQuestion: String,
     ): AnalyzerResult {
         val sensitivePrefix = sensitiveOperationGuard.warningFor(userQuestion, screenText)
+        when (val plan = screenGuidanceAgent.plan(userQuestion, screenText, sensitivePrefix)) {
+            is ScreenGuidancePlan.LocalAnswer -> {
+                return AnalyzerResult(
+                    guidance = plan.guidance,
+                    isSensitive = sensitivePrefix.isNotBlank(),
+                )
+            }
+            ScreenGuidancePlan.NeedsVisionModel -> Unit
+        }
+
+        // Never wake the visual model when the capture itself failed. There is no image
+        // evidence for it to inspect, so a short recovery instruction is more useful and
+        // avoids making the person wait for a request that cannot succeed.
+        if (screenBitmap == null) {
+            return AnalyzerResult(
+                guidance = "我没有获取到当前屏幕。请回到要操作的页面，重新打开“看屏”权限后再试；也可以直接说出屏幕上能看到的文字。",
+                isSensitive = sensitivePrefix.isNotBlank(),
+                errorMessage = "屏幕截图未获取到，未启动离线看屏模型。",
+            )
+        }
 
         if (!modelAssetManager.isMiniCpmModelInstalled()) {
             val files = modelAssetManager.miniCpmModelFiles()
@@ -41,6 +64,8 @@ class LocalFirstScreenAnalyzer(
                 projectorPath = files.projector.absolutePath,
                 imageJpeg = imageJpeg,
                 userQuestion = userQuestion,
+                screenText = screenText,
+                isSensitive = sensitivePrefix.isNotBlank(),
             )
             AnalyzerResult(
                 guidance = sensitivePrefix + guidance.trim(),
@@ -59,12 +84,12 @@ class LocalFirstScreenAnalyzer(
         } catch (e: RuntimeException) {
             val guidance = buildString {
                 append(sensitivePrefix)
-                append("离线看屏分析失败，请检查模型文件是否完整。")
+                append("我这次没有看清页面。请回到要操作的页面，重新打开看屏后再试；如果还是不行，可以直接说出屏幕上的文字。")
             }
             AnalyzerResult(
                 guidance = guidance,
                 isSensitive = sensitivePrefix.isNotBlank(),
-                errorMessage = "离线看屏分析失败。",
+                errorMessage = "离线看屏分析失败；已提示用户重新获取屏幕，而不是重复启动模型。",
             )
         }
     }

@@ -8,6 +8,8 @@ ElderHelper expects the local ASR model under the app private directory:
   tokens.txt
 ```
 
+For normal users, the app installs these files automatically through the first-run “下载完整离线包” flow. The ADB procedure below is a developer fallback only.
+
 The current PoC uses the official sherpa-onnx Paraformer small Chinese + English model:
 
 - Runtime: https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.2/sherpa-onnx-v1.13.2-android.tar.bz2

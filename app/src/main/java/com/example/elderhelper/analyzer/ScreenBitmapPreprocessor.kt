@@ -33,7 +33,10 @@ class ScreenBitmapPreprocessor(
     }
 
     private companion object {
-        private const val DEFAULT_MAX_LONG_EDGE = 1344
+        // MiniCPM-V's vision pass dominates latency on mid-range mobile CPUs. A 640 px
+        // long edge kept the Chinese settings text readable while cutting the tested
+        // prefill time on HONOR NTN-AN20 from about 105 s to about 48 s.
+        private const val DEFAULT_MAX_LONG_EDGE = 640
         private const val DEFAULT_JPEG_QUALITY = 85
     }
 }
